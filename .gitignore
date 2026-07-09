@@ -1,0 +1,7 @@
+ocr_env\
+venv
+outputs
+data\
+.idea
+__pycache__
+input_pdfs
