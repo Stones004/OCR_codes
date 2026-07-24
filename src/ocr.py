@@ -4,139 +4,74 @@ import cv2
 import easyocr
 import numpy as np
 
+from transformers import TrOCRProcessor
+from transformers import VisionEncoderDecoderModel
+
+# pyrefly: ignore [missing-import]
+import torch
+import cv2
+from PIL import Image
+import numpy as np
 
 class OCR:
 
-    def __init__(
-        self,
-        languages=None,
-        gpu=False
-    ):
-        """
-        OCR Wrapper
+    def __init__(self):
 
-        Parameters
-        ----------
-        languages : list[str]
-            OCR languages.
-
-        gpu : bool
-            Enable GPU if available.
-        """
-
-        if languages is None:
-            languages = ["en"]
-
-        print("=" * 60)
-        print("Initializing EasyOCR")
-        print("=" * 60)
-
-        self.reader = easyocr.Reader(
-            languages,
-            gpu=gpu
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
         )
 
-        print("OCR Ready\n")
+        self.processor = TrOCRProcessor.from_pretrained(
+            "microsoft/trocr-base-handwritten"
+        )
+
+        self.model = VisionEncoderDecoderModel.from_pretrained(
+            "microsoft/trocr-base-handwritten"
+        ).to(self.device)
+
+        self.model.eval()
 
     # -------------------------------------------------
 
+    @torch.no_grad()
     def read(self, image):
 
-        """
-        Parameters
-        ----------
-        image :
-            Either
+        if isinstance(image, str):
 
-            • image path
+            image = cv2.imread(image)
 
-            or
-
-            • OpenCV image (numpy array)
-
-        Returns
-        -------
-        dict
-        """
-
-        # ---------------------------------------------
-        # Read image if a path is provided
-        # ---------------------------------------------
-
-        if isinstance(image, (str, Path)):
-
-            image = cv2.imread(str(image))
-
-            if image is None:
-
-                raise FileNotFoundError(
-                    f"Could not load image : {image}"
-                )
-
-        # ---------------------------------------------
-        # Convert BGR → RGB
-        # ---------------------------------------------
-
-        if len(image.shape) == 3:
-
+        if len(image.shape) == 2:
+            image = cv2.cvtColor(
+                image,
+                cv2.COLOR_GRAY2RGB
+            )
+        else:
             image = cv2.cvtColor(
                 image,
                 cv2.COLOR_BGR2RGB
             )
 
-        # ---------------------------------------------
-        # OCR
-        # ---------------------------------------------
+        pil = Image.fromarray(image)
 
-        result = self.reader.readtext(
-            image,
-            detail=1,
-            paragraph=False
+        pixel_values = self.processor(
+            images=pil,
+            return_tensors="pt"
+        ).pixel_values.to(self.device)
+
+        generated_ids = self.model.generate(
+            pixel_values,
+            max_new_tokens=64
         )
 
-        if len(result) == 0:
-
-            return {
-
-                "text": "",
-
-                "confidence": 0.0,
-
-                "words": []
-            }
-
-        words = []
-
-        confidences = []
-
-        texts = []
-
-        for item in result:
-
-            bbox = item[0]
-
-            text = item[1]
-
-            confidence = float(item[2])
-
-            words.append({
-
-                "bbox": bbox,
-
-                "text": text,
-
-                "confidence": confidence
-            })
-
-            texts.append(text)
-
-            confidences.append(confidence)
+        text = self.processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True
+        )[0]
 
         return {
-
-            "text": " ".join(texts),
-
-            "confidence": float(np.mean(confidences)),
-
-            "words": words
+            "text": text.strip(),
+            "confidence": 1.0,
+            "words": []
         }

@@ -9,9 +9,9 @@ from src.deskewer import Deskewer
 from src.vertical_extractor import VerticalExtractor
 from src.line_detector import LineDetector
 from src.cropper import Cropper
-from src.recognizer import Recognizer
+from src.annotation_detector import AnnotationDetector
 from src.preprocessor import Preprocessor
-
+from src.roi_text_extractor import ROITextExtractor
 
 # --------------------------------------------------
 # Paths
@@ -40,7 +40,7 @@ extractor = VerticalExtractor(
     kernel_height=None
 )
 
-detector = LineDetector()
+line_detector = LineDetector()
 
 cropper = Cropper(
     right_padding=15
@@ -50,7 +50,9 @@ preprocessor = Preprocessor(
     scale=4
 )
 
-recognizer = Recognizer()
+annotation_detector = AnnotationDetector()
+
+text_extractor = ROITextExtractor()
 
 summary = []
 
@@ -80,6 +82,7 @@ for pdf_path in pdf_files:
     preprocessed_dir = pdf_output / "preprocessed"
     recognizer_dir = pdf_output / "recognizer"
     roi_dir = pdf_output / "roi"
+    ocr_dir = pdf_output / "ocr"
 
     for folder in [
         deskew_dir,
@@ -89,6 +92,7 @@ for pdf_path in pdf_files:
         preprocessed_dir,
         recognizer_dir,
         roi_dir,
+        ocr_dir,
         failed_dir
     ]:
         folder.mkdir(
@@ -140,7 +144,7 @@ for pdf_path in pdf_files:
         # Line Detection
         # ------------------------------------------
 
-        detected, separator = detector.detect(vertical)
+        detected, separator = line_detector.detect(vertical)
 
         cv2.imwrite(
             str(detected_dir / f"page_{page_idx+1:03d}.png"),
@@ -212,41 +216,58 @@ for pdf_path in pdf_files:
             processed
 
         )
-
         # ------------------------------------------
-        # Recognition
+        # Annotation Detection
         # ------------------------------------------
 
-        roi, recog_debug = recognizer.detect(
+        rois, debug = annotation_detector.detect(processed)
 
-            processed
-
-        )
+        # Save every detected ROI
+        for i, roi in enumerate(rois):
+            
+            cv2.imwrite(
+                str(
+                    roi_dir /
+                    f"page_{page_idx+1:03d}_roi_{i+1}.png"
+                ),
+                roi["roi"]
+            )
 
         cv2.imwrite(
-
             str(recognizer_dir / f"page_{page_idx + 1:03d}.png"),
-
-            recog_debug["detected"]
-
+            debug["detected"]
         )
 
-        if roi is not None:
+        if len(rois) == 0:
 
-            cv2.imwrite(
-
-                str(roi_dir / f"page_{page_idx + 1:03d}.png"),
-
-                roi
-
-            )
+            print("Annotation Detector : FAILED")
+            extracted_text = []
 
         else:
 
-            print("Recognizer : FAILED")
+            print(f"Detected {len(rois)} annotation(s)")
+
+            extracted_text = text_extractor.extract(rois)
+
+            ocr_df = pd.DataFrame(extracted_text)
+
+            ocr_df.to_csv(
+                ocr_dir / f"page_{page_idx+1:03d}.csv",
+                index=False
+            )
+
+            print("\nOCR Results")
+
+            for item in extracted_text:
+                print(
+                    f"Block {item['block_id']}: "
+                    f"{item['text']} "
+                    f"(Conf: {item['confidence']})"
+                )
+
+        print(f"Detected {len(rois)} annotation(s)")
 
         print(f"Separator : {separator['x']}")
-
         results.append({
 
             "page": page_idx + 1,

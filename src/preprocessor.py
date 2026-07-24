@@ -27,7 +27,7 @@ class Preprocessor:
         blur = cv2.GaussianBlur(
             img,
             (3,3),
-            0
+            0   
         )
 
         _, binary = cv2.threshold(
