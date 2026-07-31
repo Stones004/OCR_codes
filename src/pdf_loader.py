@@ -5,6 +5,15 @@ import cv2
 import numpy as np
 
 
+"""
+PDF Loader
+
+Loads scanned PDF documents using PyMuPDF and converts every page into
+an OpenCV image for further processing. Optionally saves the rendered
+pages for debugging purposes.
+"""
+
+
 class PDFLoader:
     """
     Loads scanned PDFs and converts each page into an OpenCV image.

@@ -4,7 +4,6 @@ import cv2
 import pandas as pd
 
 from src.pdf_loader import PDFLoader
-from src.image_analysis import ImageAnalyzer
 from src.deskewer import Deskewer
 from src.vertical_extractor import VerticalExtractor
 from src.line_detector import LineDetector
@@ -12,7 +11,18 @@ from src.cropper import Cropper
 from src.annotation_detector import AnnotationDetector
 from src.preprocessor import Preprocessor
 from src.roi_text_extractor import ROITextExtractor
+from src.config import PipelineConfig
 
+"""
+Annotation Extraction Pipeline
+
+End-to-end pipeline for processing scanned PDFs. The pipeline loads
+each document, deskews pages, detects the separator line, crops the
+annotation margin, preprocesses the image, detects handwritten
+annotations, performs OCR and exports the extracted results.
+"""
+
+config = PipelineConfig()
 # --------------------------------------------------
 # Paths
 # --------------------------------------------------
@@ -31,8 +41,6 @@ loader = PDFLoader(
     save_debug=False
 )
 
-analyzer = ImageAnalyzer()
-
 deskewer = Deskewer()
 
 extractor = VerticalExtractor(
@@ -47,12 +55,13 @@ cropper = Cropper(
 )
 
 preprocessor = Preprocessor(
-    scale=4
 )
 
 annotation_detector = AnnotationDetector()
 
-text_extractor = ROITextExtractor()
+text_extractor = ROITextExtractor(
+    backend=config.OCR_BACKEND
+)
 
 summary = []
 
@@ -111,12 +120,6 @@ for pdf_path in pdf_files:
     for page_idx, page in enumerate(pages):
 
         print(f"\nPage {page_idx + 1}")
-
-        # ------------------------------------------
-        # Analysis (optional)
-        # ------------------------------------------
-
-        info = analyzer.analyze(page)
 
         # ------------------------------------------
         # Deskew
@@ -201,71 +204,100 @@ for pdf_path in pdf_files:
         # Preprocessing
         # ------------------------------------------
 
-        processed = preprocessor.process(
+        gray, binary = preprocessor.process(crop)
 
-            crop,
-
-            method="morph_close"
-
+        cv2.imwrite(
+            str(preprocessed_dir / f"page_{page_idx + 1:03d}_gray.png"),
+            gray
         )
 
         cv2.imwrite(
-
-            str(preprocessed_dir / f"page_{page_idx + 1:03d}.png"),
-
-            processed
-
+            str(preprocessed_dir / f"page_{page_idx + 1:03d}_binary.png"),
+            binary
         )
+
         # ------------------------------------------
-        # Annotation Detection
+        # OCR
         # ------------------------------------------
 
-        rois, debug = annotation_detector.detect(processed)
+        if config.USE_ANNOTATION_DETECTION:
 
-        # Save every detected ROI
-        for i, roi in enumerate(rois):
+            print("Mode : ROI OCR")
+
+            rois, debug = annotation_detector.detect(gray, binary)
+
+            if config.SAVE_ROIS:
+
+                for i, roi in enumerate(rois):
+
+                    cv2.imwrite(
+
+                        str(
+                            roi_dir /
+                            f"page_{page_idx+1:03d}_roi_{i+1}.png"
+                        ),
+
+                        roi["roi"]
+
+                    )
             
-            cv2.imwrite(
-                str(
-                    roi_dir /
-                    f"page_{page_idx+1:03d}_roi_{i+1}.png"
-                ),
-                roi["roi"]
+            if config.SAVE_DEBUG_IMAGES:
+
+                cv2.imwrite(
+
+                    str(
+                        recognizer_dir /
+                        f"page_{page_idx+1:03d}.png"
+                    ),
+
+                    debug["detected"]
+
+                )
+
+            extracted_text = text_extractor.extract(
+                gray,
+                rois
             )
-
-        cv2.imwrite(
-            str(recognizer_dir / f"page_{page_idx + 1:03d}.png"),
-            debug["detected"]
-        )
-
-        if len(rois) == 0:
-
-            print("Annotation Detector : FAILED")
-            extracted_text = []
 
         else:
 
-            print(f"Detected {len(rois)} annotation(s)")
+            print("Mode : Full Margin OCR")
 
-            extracted_text = text_extractor.extract(rois)
+            extracted_text = text_extractor.extract(
+                gray
+            )
+
+        # ------------------------------------------
+        # Save OCR Results
+        # ------------------------------------------
+
+        if len(extracted_text) > 0:
 
             ocr_df = pd.DataFrame(extracted_text)
 
             ocr_df.to_csv(
-                ocr_dir / f"page_{page_idx+1:03d}.csv",
+
+                ocr_dir /
+                f"page_{page_idx+1:03d}.csv",
+
                 index=False
+
             )
 
             print("\nOCR Results")
 
             for item in extracted_text:
+
                 print(
+
                     f"Block {item['block_id']}: "
-                    f"{item['text']} "
-                    f"(Conf: {item['confidence']})"
+                    f"{item['text']}"
+
                 )
 
-        print(f"Detected {len(rois)} annotation(s)")
+        else:
+
+            print("No text detected.")
 
         print(f"Separator : {separator['x']}")
         results.append({

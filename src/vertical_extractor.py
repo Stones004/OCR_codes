@@ -1,6 +1,15 @@
 import cv2
 import numpy as np
 
+
+"""
+Vertical Line Extractor
+
+Extracts prominent vertical structures from a scanned page using
+thresholding and morphological operations. The extracted image is
+used to locate the table separator.
+"""
+
 class VerticalExtractor:
 
     def __init__(self,

@@ -2,6 +2,14 @@ import cv2
 import numpy as np
 
 
+"""
+Deskewer
+
+Automatically estimates the skew angle of scanned pages using
+projection profile analysis and rotates the image to improve
+alignment for downstream processing.
+"""
+
 class Deskewer:
 
     def __init__(

@@ -1,6 +1,16 @@
 import cv2
 
 
+
+"""
+Margin Cropper
+
+Crops the page using the detected separator so that only the left
+annotation region is retained for subsequent annotation detection
+and OCR.
+"""
+
+
 class Cropper:
 
     def __init__(self, right_padding=15):

@@ -1,4 +1,4 @@
-import cv2
+'''import cv2
 import numpy as np
 
 
@@ -106,4 +106,59 @@ class Preprocessor:
 
             raise ValueError(
                 f"Unknown preprocessing method: {method}"
+            )'''
+
+
+
+"""
+Preprocessor
+
+Converts the cropped annotation region into grayscale and a cleaned
+binary image by removing small connected components. The processed
+binary image improves annotation detection.
+"""
+
+import cv2
+import numpy as np
+
+
+class Preprocessor:
+
+    def __init__(self, min_area=200):
+
+        self.min_area = min_area
+
+    # --------------------------------------------------
+
+    def process(self, image):
+
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(
+                image,
+                cv2.COLOR_BGR2GRAY
             )
+        else:
+            gray = image.copy()
+
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            binary,
+            connectivity=8
+        )
+
+        clean = np.zeros_like(binary)
+
+        for i in range(1, num_labels):
+
+            area = stats[i, cv2.CC_STAT_AREA]
+
+            if area >= self.min_area:
+                clean[labels == i] = 255
+
+        return gray, clean

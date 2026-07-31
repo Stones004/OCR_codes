@@ -2,6 +2,14 @@ import cv2
 import numpy as np
 
 
+"""
+Separator Detector
+
+Identifies the vertical separator line from the extracted vertical
+structures using connected component analysis and geometric filtering.
+The detected separator is later used to isolate the annotation margin.
+"""
+
 class LineDetector:
 
     def __init__(

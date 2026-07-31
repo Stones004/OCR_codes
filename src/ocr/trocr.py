@@ -12,8 +12,18 @@ import torch
 import cv2
 from PIL import Image
 import numpy as np
+from .base import OCRBackend
 
-class OCR:
+
+"""
+OCR Engine
+
+Recognizes handwritten text from annotation ROIs using Microsoft's
+TrOCR handwriting recognition model and returns the predicted text
+along with confidence information.
+"""
+
+class TrOCRBackend(OCRBackend):
 
     def __init__(self):
 
