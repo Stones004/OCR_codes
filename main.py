@@ -59,9 +59,9 @@ preprocessor = Preprocessor(
 
 annotation_detector = AnnotationDetector()
 
-text_extractor = ROITextExtractor(
-    backend=config.OCR_BACKEND
-)
+#text_extractor = ROITextExtractor(
+#    backend=config.OCR_BACKEND
+#)
 
 summary = []
 
@@ -254,50 +254,24 @@ for pdf_path in pdf_files:
 
                 )
 
-            extracted_text = text_extractor.extract(
-                gray,
-                rois
-            )
+            #extracted_text = text_extractor.extract(
+            #    gray,
+            #    rois
+            #)
 
         else:
 
             print("Mode : Full Margin OCR")
 
-            extracted_text = text_extractor.extract(
-                gray
-            )
+            #extracted_text = text_extractor.extract(
+            #    gray
+            #)
 
         # ------------------------------------------
         # Save OCR Results
         # ------------------------------------------
 
-        if len(extracted_text) > 0:
-
-            ocr_df = pd.DataFrame(extracted_text)
-
-            ocr_df.to_csv(
-
-                ocr_dir /
-                f"page_{page_idx+1:03d}.csv",
-
-                index=False
-
-            )
-
-            print("\nOCR Results")
-
-            for item in extracted_text:
-
-                print(
-
-                    f"Block {item['block_id']}: "
-                    f"{item['text']}"
-
-                )
-
-        else:
-
-            print("No text detected.")
+        
 
         print(f"Separator : {separator['x']}")
         results.append({

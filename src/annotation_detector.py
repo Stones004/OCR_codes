@@ -1,155 +1,3 @@
-'''import cv2
-import numpy as np
-
-
-class AnnotationDetector:
-
-    def __init__(
-        self,
-        min_width=6,
-        min_height=6,
-        padding=10,
-        merge_dist=15,
-        min_confident_area=1000,
-        min_confident_dim=40,
-    ):
-        self.min_width = min_width
-        self.min_height = min_height
-        self.padding = padding
-        self.merge_dist = merge_dist
-
-        self.min_ink_pixels = 300    
-        self.min_fill_ratio = 0.08 
-
-        # post-merge confidence thresholds — tune against your smallest
-        # real mark (e.g. the filled dot) and your worst speckle case
-        self.min_confident_area = min_confident_area
-        self.min_confident_dim = min_confident_dim
-
-    def remove_lines(self, binary):
-        h, w = binary.shape
-
-        horiz_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 15, 1))
-        vert_kernel  = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 15))
-
-        horiz_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horiz_kernel, iterations=1)
-        vert_lines  = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vert_kernel, iterations=1)
-
-        lines_mask = cv2.bitwise_or(horiz_lines, vert_lines)
-        lines_mask = cv2.dilate(lines_mask, np.ones((3, 3), np.uint8), iterations=1)
-
-        return cv2.bitwise_and(binary, cv2.bitwise_not(lines_mask))
-
-    def _boxes_close(self, a, b):
-        ax1, ay1, ax2, ay2 = a
-        bx1, by1, bx2, by2 = b
-        # expand a by merge_dist and test overlap with b
-        ax1 -= self.merge_dist; ay1 -= self.merge_dist
-        ax2 += self.merge_dist; ay2 += self.merge_dist
-        return not (bx2 < ax1 or bx1 > ax2 or by2 < ay1 or by1 > ay2)
-
-    def _merge_boxes(self, boxes):
-        # boxes: list of (x1,y1,x2,y2). Repeated pairwise merge until stable.
-        changed = True
-        while changed:
-            changed = False
-            out = []
-            used = [False] * len(boxes)
-            for i in range(len(boxes)):
-                if used[i]:
-                    continue
-                cur = list(boxes[i])
-                used[i] = True
-                for j in range(i + 1, len(boxes)):
-                    if used[j]:
-                        continue
-                    if self._boxes_close(tuple(cur), boxes[j]):
-                        cur[0] = min(cur[0], boxes[j][0])
-                        cur[1] = min(cur[1], boxes[j][1])
-                        cur[2] = max(cur[2], boxes[j][2])
-                        cur[3] = max(cur[3], boxes[j][3])
-                        used[j] = True
-                        changed = True
-                out.append(tuple(cur))
-            boxes = out
-        return boxes
-
-    def detect(self, image):
-
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image.copy()
-
-        gray = cv2.medianBlur(gray, 5)
-
-        _, binary = cv2.threshold(
-            gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
-
-        binary = self.remove_lines(binary)
-
-        close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_kernel, iterations=2)
-
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
-
-        raw_boxes = []
-        for i in range(1, num_labels):
-            w = stats[i, cv2.CC_STAT_WIDTH]
-            h = stats[i, cv2.CC_STAT_HEIGHT]
-            x = stats[i, cv2.CC_STAT_LEFT]
-            y = stats[i, cv2.CC_STAT_TOP]
-
-            if w < self.min_width or h < self.min_height:
-                continue
-
-            raw_boxes.append((x, y, x + w, y + h))
-
-        merged = self._merge_boxes(raw_boxes)
-
-        # ---- confidence decision AFTER merging, on actual ink density ----
-        confident = []
-        for (x1, y1, x2, y2) in merged:
-            w = x2 - x1
-            h = y2 - y1
-            bbox_area = w * h
-
-            if bbox_area < self.min_confident_area:
-                continue
-            if w < self.min_confident_dim or h < self.min_confident_dim:
-                continue
-
-            # count real ink pixels inside this box, not just bbox geometry —
-            # a merged bbox spanning two noise specks is mostly empty
-            ink_pixels = cv2.countNonZero(binary[y1:y2, x1:x2])
-            fill_ratio = ink_pixels / float(bbox_area)
-
-            if ink_pixels < self.min_ink_pixels:
-                continue
-            if fill_ratio < self.min_fill_ratio:
-                continue
-
-            confident.append((x1, y1, x2, y2))
-
-        detected = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        rois = []
-
-        for (x1, y1, x2, y2) in confident:
-            x1p = max(0, x1 - self.padding)
-            y1p = max(0, y1 - self.padding)
-            x2p = min(gray.shape[1], x2 + self.padding)
-            y2p = min(gray.shape[0], y2 + self.padding)
-
-            rois.append({
-                "bbox": (x1p, y1p, x2p, y2p),
-                "roi": gray[y1p:y2p, x1p:x2p],
-            })
-
-            cv2.rectangle(detected, (x1p, y1p), (x2p, y2p), (0, 0, 255), 2)
-
-        return rois, {"binary": binary, "detected": detected}'''
-
 """
 Annotation Detector
 
@@ -158,11 +6,8 @@ lines, extracting connected components, merging nearby fragments and
 filtering candidates based on size and ink density. Returns cropped
 ROIs for OCR.
 """
-
-
 import cv2
 import numpy as np
-
 
 class AnnotationDetector:
 
@@ -187,6 +32,155 @@ class AnnotationDetector:
         self.min_confident_dim = min_confident_dim
         self.min_ink_pixels = min_ink_pixels
         self.min_fill_ratio = min_fill_ratio
+
+        self.refine_height = 140          # Only refine tall ROIs
+        self.valley_threshold = 0.15      # 15% of max projection
+        self.min_valley_width = 5         # Consecutive empty rows
+        self.min_segment_height = 20      # Prevent tiny fragments
+    
+
+    def _horizontal_projection(self, roi):
+
+        return np.count_nonzero(
+            roi,
+            axis=1
+        )
+    
+    def _smooth_projection(self, proj):
+
+        kernel = np.ones(5) / 5
+
+        return np.convolve(
+            proj,
+            kernel,
+            mode="same"
+        )
+    
+
+    def _find_split_rows(
+        self,
+        projection
+    ):
+
+        threshold = 0.15 * projection.max()
+
+        valleys = []
+
+        start = None
+
+        for i, v in enumerate(projection):
+
+            if v < threshold:
+
+                if start is None:
+                    start = i
+
+            else:
+
+                if start is not None:
+
+                    if i - start >= 4:
+
+                        valleys.append(
+                            (start + i)//2
+                        )
+
+                    start = None
+
+        return valleys
+    
+
+    def _refine_rois(self, merged, binary):
+        """
+        Split vertically merged ROIs using horizontal projection.
+
+        Runs ONLY on unusually tall ROIs.
+        """
+
+        refined = []
+
+        for (x1, y1, x2, y2) in merged:
+
+            roi_h = y2 - y1
+
+            # Small ROIs are assumed correct
+            if roi_h < self.refine_height:
+                refined.append((x1, y1, x2, y2))
+                continue
+
+            roi = binary[y1:y2, x1:x2]
+
+            # Horizontal projection
+            projection = np.count_nonzero(roi, axis=1).astype(np.float32)
+
+            # Smooth projection
+            projection = cv2.GaussianBlur(
+                projection.reshape(-1, 1),
+                (1, 9),
+                0
+            ).flatten()
+
+            threshold = projection.max() * self.valley_threshold
+
+            valleys = []
+
+            start = None
+
+            for i, value in enumerate(projection):
+
+                if value < threshold:
+
+                    if start is None:
+                        start = i
+
+                else:
+
+                    if start is not None:
+
+                        if (i - start) >= self.min_valley_width:
+                            valleys.append((start + i) // 2)
+
+                        start = None
+
+            # No valid valleys
+            if len(valleys) == 0:
+                refined.append((x1, y1, x2, y2))
+                continue
+
+            prev = 0
+            pieces = []
+
+            for split in valleys:
+
+                if split - prev >= self.min_segment_height:
+                    pieces.append(
+                        (
+                            x1,
+                            y1 + prev,
+                            x2,
+                            y1 + split
+                        )
+                    )
+
+                prev = split
+
+            if roi_h - prev >= self.min_segment_height:
+                pieces.append(
+                    (
+                        x1,
+                        y1 + prev,
+                        x2,
+                        y2
+                    )
+                )
+
+            # Safety check
+            if len(pieces) <= 1:
+                refined.append((x1, y1, x2, y2))
+            else:
+                refined.extend(pieces)
+
+        return refined
 
     # --------------------------------------------------
 
@@ -249,9 +243,62 @@ class AnnotationDetector:
             bx1 > ax2 or
             by2 < ay1 or
             by1 > ay2
+        ) 
+
+    """def _boxes_close(self, a, b):
+
+        #Decide whether two connected components belong to the same
+        #handwritten text instance.
+
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+
+        aw = ax2 - ax1
+        ah = ay2 - ay1
+
+        bw = bx2 - bx1
+        bh = by2 - by1
+
+        # ----------------------------
+        # 1. Horizontal gap
+        # ----------------------------
+        if ax2 < bx1:
+            hgap = bx1 - ax2
+        elif bx2 < ax1:
+            hgap = ax1 - bx2
+        else:
+            hgap = 0
+
+        # ----------------------------
+        # 2. Vertical overlap
+        # ----------------------------
+        overlap = min(ay2, by2) - max(ay1, by1)
+
+        if overlap <= 0:
+            return False
+
+        overlap_ratio = overlap / float(min(ah, bh))
+
+        # ----------------------------
+        # 3. Adaptive horizontal gap
+        # ----------------------------
+        max_gap = max(
+            self.merge_dist,
+            int(0.5 * max(aw, bw))
         )
 
+        # ----------------------------
+        # 4. Merge decision
+        # ----------------------------
+        return (
+            overlap_ratio >= 0.40 and
+            hgap <= max_gap
+        ) """
+
+    # The above function was perfect for numbers but broke on roman numerals 
     # --------------------------------------------------
+
+
 
     def _merge_boxes(self, boxes):
 
@@ -338,6 +385,11 @@ class AnnotationDetector:
 
         # Merge nearby fragments
         merged = self._merge_boxes(boxes)
+
+        merged = self._refine_rois(
+            merged,
+            binary
+        )
 
         confident = []
 

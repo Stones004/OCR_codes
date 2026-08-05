@@ -19,7 +19,7 @@ class PipelineConfig:
     # Pipeline Mode
     # ------------------------------------------
 
-    USE_ANNOTATION_DETECTION: bool = False
+    USE_ANNOTATION_DETECTION: bool = True
 
     # ------------------------------------------
     # Debug
