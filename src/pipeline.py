@@ -13,7 +13,8 @@ from src.annotation_detector import AnnotationDetector
 from src.roi_text_extractor import ROITextExtractor
 import cv2
 import pandas as pd
-
+from src.annotation_remover import AnnotationRemover
+import numpy as np
 
 class OCRPipeline:
 
@@ -51,6 +52,8 @@ class OCRPipeline:
         self.cropper = Cropper(
             right_padding=15
         )
+
+        self.annotation_remover = AnnotationRemover()
 
         self.page_preprocessor = PagePreprocessor()
 
@@ -121,6 +124,8 @@ class OCRPipeline:
             "detected": pdf_output / "detected",
 
             "cropped": pdf_output / "cropped",
+
+            "annotation_removed": pdf_output / "annotation_removed",
 
             "preprocessed": pdf_output / "preprocessed",
 
@@ -255,8 +260,44 @@ class OCRPipeline:
             crop
         )
 
+        # -----------------------------------------
+        # Remove evaluator annotations
+        # -----------------------------------------
 
-        gray, binary = self.preprocessor.process(crop)
+        if self.config.USE_ANNOTATION_REMOVAL:
+
+            clean_crop, mask = self.annotation_remover.process_debug(crop)
+
+        else:
+
+            clean_crop = crop
+
+            mask = np.zeros(
+                crop.shape[:2],
+                dtype=np.uint8
+            )
+
+        # Save debug images
+
+        cv2.imwrite(
+            str(
+                folders["annotation_removed"] /
+                f"page_{page_idx+1:03d}.png"
+            ),
+            clean_crop
+        )
+
+        cv2.imwrite(
+            str(
+                folders["annotation_removed"] /
+                f"page_{page_idx+1:03d}_mask.png"
+            ),
+            mask
+        )
+
+        # Continue OCR pipeline
+
+        gray, binary = self.ocr_preprocessor.process(clean_crop)
 
         cv2.imwrite(
             str(folders["preprocessed"] / f"page_{page_idx+1:03d}_gray.png"),

@@ -1,0 +1,3057 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+The content has been processed where comments have been removed, empty lines have been removed.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Code comments have been removed from supported file types
+- Empty lines have been removed from all files
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+research/
+  benchmark.py
+  dataset.py
+  evaluate.py
+  prepare_roi_dataset.py
+src/
+  ocr/
+    __init__.py
+    base.py
+    factory.py
+    lmstudio.py
+    trocr.py
+  annotation_detector.py
+  config.py
+  cropper.py
+  deskewer.py
+  line_detector.py
+  lmstudio_preprocessor.py
+  ocr_preprocessor.py
+  page_preprocessor.py
+  pdf_loader.py
+  pipeline.py
+  preprocessor.py
+  roi_text_extractor.py
+  vertical_extractor.py
+tests/
+  __init__.py
+  test_denoise.py
+  test_deskew.py
+  test_detect_text.py
+  test_mistral_local.py
+  test_mistral.py
+  test_ocr.py
+  test_overlap.py
+  test_preprocessor.py
+  test_recognizer.py
+  test_vertical.py
+main.py
+README.md
+requirements.txt
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="research/benchmark.py">
+from pathlib import Path
+import cv2
+from src.ocr_preprocessor import OCRPreprocessor
+IMAGE_PATH = Path("sample_crop.png")
+OUTPUT_DIR = Path("research/results/images")
+def main():
+    image = cv2.imread(str(IMAGE_PATH))
+    if image is None:
+        raise FileNotFoundError(IMAGE_PATH)
+    preprocessor = OCRPreprocessor()
+    gray, outputs = preprocessor.benchmark(image)
+    preprocessor.save_benchmark(
+        outputs,
+        OUTPUT_DIR
+    )
+    print("\nBenchmark complete!\n")
+    print("Generated methods:")
+    for method in outputs:
+        print(f"  ✓ {method}")
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="research/dataset.py">
+from pathlib import Path
+def load_dataset(folder):
+    folder = Path(folder)
+    extensions = {".png", ".jpg", ".jpeg", ".tif"}
+    return sorted(
+        [
+            file
+            for file in folder.iterdir()
+            if file.suffix.lower() in extensions
+        ]
+    )
+</file>
+
+<file path="research/evaluate.py">
+from pathlib import Path
+import time
+import cv2
+import pandas as pd
+from src.ocr_preprocessor import OCRPreprocessor
+from src.roi_text_extractor import ROITextExtractor
+DATASET = Path("data/roi_dataset/")
+OUTPUT = Path("research/results/csv/evaluation.csv")
+BACKEND = "lmstudio"
+def load_dataset(folder):
+    exts = {".png", ".jpg", ".jpeg", ".tif"}
+    return sorted(
+        [
+            f
+            for f in Path(folder).iterdir()
+            if f.suffix.lower() in exts
+        ]
+    )
+def main():
+    preprocessor = OCRPreprocessor()
+    ocr = ROITextExtractor(
+        backend=BACKEND,
+        use_backend_preprocessing=False
+    )
+    results = []
+    images = load_dataset(DATASET)
+    print(f"\nFound {len(images)} image(s)\n")
+    for image_path in images:
+        print(f"Processing: {image_path.name}")
+        image = cv2.imread(str(image_path))
+        if image is None:
+            print("Could not load image.")
+            continue
+        for method in preprocessor.available_methods():
+            # --------------------------------------
+            # PREPROCESSING
+            # --------------------------------------
+            t0 = time.perf_counter()
+            _, processed = preprocessor.process_method(
+                image,
+                method
+            )
+            save_dir = Path("research/results/preprocessed") / method
+            save_dir.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(
+                str(save_dir / image_path.name),
+                processed
+            )
+            preprocess_ms = (
+                time.perf_counter()
+                - t0
+            ) * 1000
+            t0 = time.perf_counter()
+            predictions = ocr.extract(processed)
+            ocr_ms = (
+                time.perf_counter()
+                - t0
+            ) * 1000
+            text = "\n".join(
+                block["text"]
+                for block in predictions
+            )
+            ocr_dir = Path("research/results/ocr") / method
+            ocr_dir.mkdir(parents=True, exist_ok=True)
+            with open(
+                ocr_dir / f"{image_path.stem}.txt",
+                "w",
+                encoding="utf-8"
+            ) as f:
+                f.write(text)
+            black_pixels = (
+                processed.size
+                - cv2.countNonZero(processed)
+            )
+            density = black_pixels / processed.size
+            results.append({
+                "image": image_path.name,
+                "method": method,
+                "preprocess_ms": round(preprocess_ms, 2),
+                "ocr_ms": round(ocr_ms, 2),
+                "total_ms": round(
+                    preprocess_ms + ocr_ms,
+                    2
+                ),
+                "blocks": len(predictions),
+                "characters": len(text),
+                "words": len(text.split()),
+                "lines": len(text.splitlines()),
+                "density": round(density, 4),
+                "empty": len(text.strip()) == 0,
+                "text": text
+            })
+    df = pd.DataFrame(results)
+    OUTPUT.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+    df.to_csv(
+        OUTPUT,
+        index=False
+    )
+    print("\nEvaluation Complete\n")
+    print(df.head())
+    print(f"\nSaved to:\n{OUTPUT}")
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="research/prepare_roi_dataset.py">
+from pathlib import Path
+import cv2
+import fitz
+import numpy as np
+from tqdm import tqdm
+from src.deskewer import Deskewer
+from src.vertical_extractor import VerticalExtractor
+from src.line_detector import LineDetector
+from src.cropper import Cropper
+from src.annotation_detector import AnnotationDetector
+INPUT_DIR = Path("data/input_pdfs")
+OUTPUT_DIR = Path("data/roi_dataset")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+DPI = 300
+def pdf_to_images(pdf_path):
+    document = fitz.open(pdf_path)
+    zoom = DPI / 72
+    matrix = fitz.Matrix(zoom, zoom)
+    for page_number in range(len(document)):
+        page = document.load_page(page_number)
+        pix = page.get_pixmap(matrix=matrix)
+        image = np.frombuffer(
+            pix.samples,
+            dtype=np.uint8
+        ).reshape(
+            pix.height,
+            pix.width,
+            pix.n
+        )
+        if pix.n == 4:
+            image = cv2.cvtColor(
+                image,
+                cv2.COLOR_RGBA2BGR
+            )
+        else:
+            image = cv2.cvtColor(
+                image,
+                cv2.COLOR_RGB2BGR
+            )
+        yield page_number + 1, image
+    document.close()
+class Preprocessor:
+    def __init__(self, kernel_size=3):
+        self.kernel_size = kernel_size
+    def full_pipeline(self, gray):
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        kernel = np.ones(
+            (
+                self.kernel_size,
+                self.kernel_size
+            ),
+            np.uint8
+        )
+        return cv2.morphologyEx(
+            binary,
+            cv2.MORPH_CLOSE,
+            kernel
+        )
+    def process(self, image):
+        gray = cv2.cvtColor(
+            image,
+            cv2.COLOR_BGR2GRAY
+        )
+        return self.full_pipeline(gray)
+def process_page(image):
+    deskewed, angle = deskewer.process(image)
+    vertical, _ = vertical_extractor.extract(deskewed)
+    _, separator = line_detector.detect(vertical)
+    if separator is None:
+        return []
+    strip = cropper.crop(deskewed, separator)
+    if strip is None:
+        return []
+    gray = cv2.cvtColor(
+        strip,
+        cv2.COLOR_BGR2GRAY
+    )
+    _, binary = cv2.threshold(
+        gray,
+        0,
+        255,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+    rois, _ = annotation_detector.detect(
+        gray,
+        binary
+    )
+    print(type(rois))
+    print(len(rois))
+    return rois
+def process_pdf(pdf_path):
+    pdf_name = pdf_path.stem
+    print(f"\nProcessing {pdf_name}")
+    saved = 0
+    failed = 0
+    for page_number, image in pdf_to_images(pdf_path):
+        try:
+            rois = process_page(image)
+        except Exception as e:
+            print(
+                f"Page {page_number:03d} failed : {e}"
+            )
+            failed += 1
+            continue
+        if len(rois) == 0:
+            print(
+                f"Page {page_number:03d}: No annotations detected"
+            )
+            failed += 1
+            continue
+        for roi_number, roi in enumerate(rois, start=1):
+            filename = (
+                f"{pdf_name}"
+                f"_page_{page_number:03d}"
+                f"_roi_{roi_number:03d}.png"
+            )
+            output_path = OUTPUT_DIR / filename
+            cv2.imwrite(
+                str(output_path),
+                roi["roi"]
+            )
+            saved += 1
+    print(
+        f"  Saved {saved} ROI(s)"
+    )
+    if failed:
+        print(
+            f"  Failed {failed} page(s)"
+        )
+# ============================================================
+# Main
+# ============================================================
+def main():
+    pdfs = sorted(INPUT_DIR.glob("*.pdf"))
+    if len(pdfs) == 0:
+        print("No PDFs found.")
+        return
+    print(f"\nFound {len(pdfs)} PDF(s)\n")
+    for pdf in tqdm(pdfs):
+        process_pdf(pdf)
+    print("\n===================================")
+    print("ROI DATASET CREATION COMPLETE")
+    print("===================================")
+    print(f"Saved to : {OUTPUT_DIR.resolve()}")
+# ============================================================
+# Pipeline Components
+# ============================================================
+deskewer = Deskewer()
+preprocessor = Preprocessor()
+vertical_extractor = VerticalExtractor()
+line_detector = LineDetector()
+cropper = Cropper()
+annotation_detector = AnnotationDetector()
+# ============================================================
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="src/ocr/__init__.py">
+from .factory import create_backend
+</file>
+
+<file path="src/ocr/base.py">
+from abc import ABC, abstractmethod
+class OCRBackend(ABC):
+    @abstractmethod
+    def read(self, image):
+        pass
+</file>
+
+<file path="src/ocr/factory.py">
+from .lmstudio import LMStudioBackend
+from .trocr import TrOCRBackend
+def create_backend(name: str):
+    name = name.lower()
+    backends = {
+        "lmstudio": LMStudioBackend,
+        "trocr": TrOCRBackend,
+    }
+    try:
+        return backends[name]()
+    except KeyError:
+        raise ValueError(
+            f"Unknown OCR backend '{name}'. "
+            f"Available: {list(backends.keys())}"
+        )
+</file>
+
+<file path="src/ocr/lmstudio.py">
+from email import contentmanager
+import base64
+import json
+import re
+import cv2
+from openai import OpenAI
+from .base import OCRBackend
+from src.lmstudio_preprocessor import LMStudioPreprocessor
+class LMStudioBackend(OCRBackend):
+    def __init__(
+        self,
+        model="mistralai/ministral-3-3b",
+        host="http://127.0.0.1:1234/v1",
+    ):
+        self.model = model
+        self.client = OpenAI(
+            base_url=host,
+            api_key="lm-studio",
+        )
+        self.preprocessor = LMStudioPreprocessor()
+        self.prompt = """
+Extract all visible text from the image as individual items (words, numbers, or short labels).
+Output Requirements:
+Return ONLY a raw JSON array (no markdown fences, no extra text).
+Order items from top-to-bottom, then left-to-right.
+Use normalized coordinates between 0.0 and 1.0 (top-left is 0.0, 0.0, bottom-right is 1.0, 1.0), rounded to 3 decimal places.
+[
+  {
+    "text": "detected text",
+    "bounding_box": {
+      "left": 0.000,
+      "top": 0.000,
+      "right": 0.000,
+      "bottom": 0.000
+    },
+    "center": {
+      "x": 0.000,
+      "y": 0.000
+    }
+  }
+] Return exactly ONE JSON array
+"""
+    def read(self, image, preprocess=True):
+        if preprocess:
+            image = self.preprocessor.process(image)
+        cv2.imwrite(
+            "lmstudio_processed/lmstudio_input.png",
+            image
+        )
+        success, buffer = cv2.imencode(".png", image)
+        if not success:
+            raise RuntimeError("Failed to encode image.")
+        image_b64 = base64.b64encode(buffer).decode()
+        response = self.client.chat.completions.create(
+            model=self.model,
+            temperature=0,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": self.prompt,
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}"
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+        content = response.choices[0].message.content
+        # Find where the first JSON array starts
+        start = content.find("[")
+        if start == -1:
+            raise RuntimeError(
+                f"No JSON array found.\n\nResponse:\n{content}"
+            )
+        decoder = json.JSONDecoder()
+        try:
+            predictions, end = decoder.raw_decode(content[start:])
+            return predictions
+        except json.JSONDecodeError as e:
+            print("\n========== INVALID JSON ==========\n")
+            print(content)
+            print("\n==================================\n")
+            raise
+</file>
+
+<file path="src/ocr/trocr.py">
+from pathlib import Path
+import cv2
+import easyocr
+import numpy as np
+from transformers import TrOCRProcessor
+from transformers import VisionEncoderDecoderModel
+import torch
+import cv2
+from PIL import Image
+import numpy as np
+from .base import OCRBackend
+class TrOCRBackend(OCRBackend):
+    def __init__(self):
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+        self.processor = TrOCRProcessor.from_pretrained(
+            "microsoft/trocr-base-handwritten"
+        )
+        self.model = VisionEncoderDecoderModel.from_pretrained(
+            "microsoft/trocr-base-handwritten"
+        ).to(self.device)
+        self.model.eval()
+    @torch.no_grad()
+    def read(self, image):
+        if isinstance(image, str):
+            image = cv2.imread(image)
+        if len(image.shape) == 2:
+            image = cv2.cvtColor(
+                image,
+                cv2.COLOR_GRAY2RGB
+            )
+        else:
+            image = cv2.cvtColor(
+                image,
+                cv2.COLOR_BGR2RGB
+            )
+        pil = Image.fromarray(image)
+        pixel_values = self.processor(
+            images=pil,
+            return_tensors="pt"
+        ).pixel_values.to(self.device)
+        generated_ids = self.model.generate(
+            pixel_values,
+            max_new_tokens=64
+        )
+        text = self.processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True
+        )[0]
+        return {
+            "text": text.strip(),
+            "confidence": 1.0,
+            "words": []
+        }
+</file>
+
+<file path="src/annotation_detector.py">
+import cv2
+import numpy as np
+class AnnotationDetector:
+    def __init__(
+        self,
+        min_width=6,
+        min_height=6,
+        padding=10,
+        merge_dist=25,
+        min_confident_area=800,
+        min_confident_dim=20,
+        min_ink_pixels=150,
+        min_fill_ratio=0.08,
+    ):
+        self.min_width = min_width
+        self.min_height = min_height
+        self.padding = padding
+        self.merge_dist = merge_dist
+        self.min_confident_area = min_confident_area
+        self.min_confident_dim = min_confident_dim
+        self.min_ink_pixels = min_ink_pixels
+        self.min_fill_ratio = min_fill_ratio
+        self.refine_height = 140
+        self.valley_threshold = 0.15
+        self.min_valley_width = 5
+        self.min_segment_height = 20
+    def _horizontal_projection(self, roi):
+        return np.count_nonzero(
+            roi,
+            axis=1
+        )
+    def _smooth_projection(self, proj):
+        kernel = np.ones(5) / 5
+        return np.convolve(
+            proj,
+            kernel,
+            mode="same"
+        )
+    def _find_split_rows(
+        self,
+        projection
+    ):
+        threshold = 0.15 * projection.max()
+        valleys = []
+        start = None
+        for i, v in enumerate(projection):
+            if v < threshold:
+                if start is None:
+                    start = i
+            else:
+                if start is not None:
+                    if i - start >= 4:
+                        valleys.append(
+                            (start + i)//2
+                        )
+                    start = None
+        return valleys
+    def _refine_rois(self, merged, binary):
+        refined = []
+        for (x1, y1, x2, y2) in merged:
+            roi_h = y2 - y1
+            if roi_h < self.refine_height:
+                refined.append((x1, y1, x2, y2))
+                continue
+            roi = binary[y1:y2, x1:x2]
+            projection = np.count_nonzero(roi, axis=1).astype(np.float32)
+            projection = cv2.GaussianBlur(
+                projection.reshape(-1, 1),
+                (1, 9),
+                0
+            ).flatten()
+            threshold = projection.max() * self.valley_threshold
+            valleys = []
+            start = None
+            for i, value in enumerate(projection):
+                if value < threshold:
+                    if start is None:
+                        start = i
+                else:
+                    if start is not None:
+                        if (i - start) >= self.min_valley_width:
+                            valleys.append((start + i) // 2)
+                        start = None
+            if len(valleys) == 0:
+                refined.append((x1, y1, x2, y2))
+                continue
+            prev = 0
+            pieces = []
+            for split in valleys:
+                if split - prev >= self.min_segment_height:
+                    pieces.append(
+                        (
+                            x1,
+                            y1 + prev,
+                            x2,
+                            y1 + split
+                        )
+                    )
+                prev = split
+            if roi_h - prev >= self.min_segment_height:
+                pieces.append(
+                    (
+                        x1,
+                        y1 + prev,
+                        x2,
+                        y2
+                    )
+                )
+            if len(pieces) <= 1:
+                refined.append((x1, y1, x2, y2))
+            else:
+                refined.extend(pieces)
+        return refined
+    def remove_lines(self, binary):
+        h, w = binary.shape
+        horiz_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (max(20, w // 15), 1)
+        )
+        vert_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (1, max(20, h // 15))
+        )
+        horiz_lines = cv2.morphologyEx(
+            binary,
+            cv2.MORPH_OPEN,
+            horiz_kernel
+        )
+        vert_lines = cv2.morphologyEx(
+            binary,
+            cv2.MORPH_OPEN,
+            vert_kernel
+        )
+        lines = cv2.bitwise_or(
+            horiz_lines,
+            vert_lines
+        )
+        lines = cv2.dilate(
+            lines,
+            np.ones((3, 3), np.uint8),
+            iterations=1
+        )
+        return cv2.bitwise_and(
+            binary,
+            cv2.bitwise_not(lines)
+        )
+    def _boxes_close(self, a, b):
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        ax1 -= self.merge_dist
+        ay1 -= self.merge_dist
+        ax2 += self.merge_dist
+        ay2 += self.merge_dist
+        return not (
+            bx2 < ax1 or
+            bx1 > ax2 or
+            by2 < ay1 or
+            by1 > ay2
+        )
+    def _merge_boxes(self, boxes):
+        changed = True
+        while changed:
+            changed = False
+            merged = []
+            used = [False] * len(boxes)
+            for i in range(len(boxes)):
+                if used[i]:
+                    continue
+                current = list(boxes[i])
+                used[i] = True
+                for j in range(i + 1, len(boxes)):
+                    if used[j]:
+                        continue
+                    if self._boxes_close(
+                        tuple(current),
+                        boxes[j]
+                    ):
+                        current[0] = min(current[0], boxes[j][0])
+                        current[1] = min(current[1], boxes[j][1])
+                        current[2] = max(current[2], boxes[j][2])
+                        current[3] = max(current[3], boxes[j][3])
+                        used[j] = True
+                        changed = True
+                merged.append(tuple(current))
+            boxes = merged
+        return boxes
+    def detect(
+        self,
+        gray,
+        binary
+    ):
+        binary = self.remove_lines(binary)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            binary,
+            connectivity=8
+        )
+        boxes = []
+        for i in range(1, num_labels):
+            x = stats[i, cv2.CC_STAT_LEFT]
+            y = stats[i, cv2.CC_STAT_TOP]
+            w = stats[i, cv2.CC_STAT_WIDTH]
+            h = stats[i, cv2.CC_STAT_HEIGHT]
+            if w < self.min_width:
+                continue
+            if h < self.min_height:
+                continue
+            boxes.append(
+                (
+                    x,
+                    y,
+                    x + w,
+                    y + h
+                )
+            )
+        merged = self._merge_boxes(boxes)
+        merged = self._refine_rois(
+            merged,
+            binary
+        )
+        confident = []
+        for x1, y1, x2, y2 in merged:
+            w = x2 - x1
+            h = y2 - y1
+            bbox_area = w * h
+            if bbox_area < self.min_confident_area:
+                continue
+            if w < self.min_confident_dim:
+                continue
+            if h < self.min_confident_dim:
+                continue
+            ink_pixels = cv2.countNonZero(
+                binary[y1:y2, x1:x2]
+            )
+            fill_ratio = ink_pixels / float(bbox_area)
+            if ink_pixels < self.min_ink_pixels:
+                continue
+            if fill_ratio < self.min_fill_ratio:
+                continue
+            confident.append(
+                (
+                    x1,
+                    y1,
+                    x2,
+                    y2
+                )
+            )
+        detected = cv2.cvtColor(
+            gray,
+            cv2.COLOR_GRAY2BGR
+        )
+        rois = []
+        for x1, y1, x2, y2 in confident:
+            x1 = max(0, x1 - self.padding)
+            y1 = max(0, y1 - self.padding)
+            x2 = min(gray.shape[1], x2 + self.padding)
+            y2 = min(gray.shape[0], y2 + self.padding)
+            roi = gray[
+                y1:y2,
+                x1:x2
+            ]
+            rois.append(
+                {
+                    "bbox": (
+                        x1,
+                        y1,
+                        x2,
+                        y2
+                    ),
+                    "roi": roi
+                }
+            )
+            cv2.rectangle(
+                detected,
+                (x1, y1),
+                (x2, y2),
+                (0, 0, 255),
+                2
+            )
+        return rois, {
+            "binary": binary,
+            "detected": detected
+        }
+</file>
+
+<file path="src/config.py">
+from dataclasses import dataclass
+@dataclass(frozen=True)
+class PipelineConfig:
+    OCR_BACKEND: str = "lmstudio"
+    USE_ANNOTATION_DETECTION: bool = True
+    SAVE_DEBUG_IMAGES: bool = True
+    SAVE_ROIS: bool = True
+    OCR_MAX_TOKENS: int = 64
+    USE_OCR_PREPROCESSOR: bool = True
+</file>
+
+<file path="src/cropper.py">
+import cv2
+class Cropper:
+    def __init__(self, right_padding=15):
+        self.right_padding = right_padding
+    def crop(self, image, separator):
+        if separator is None:
+            return None
+        x = separator["x"] + self.right_padding
+        x = min(x, image.shape[1])
+        cropped = image[:, :x]
+        return cropped
+</file>
+
+<file path="src/deskewer.py">
+import cv2
+import numpy as np
+class Deskewer:
+    def __init__(
+        self,
+        angle_range=(-5.0, 5.0),
+        coarse_step=0.5,
+        fine_step=0.05
+    ):
+        self.angle_range = angle_range
+        self.coarse_step = coarse_step
+        self.fine_step = fine_step
+    @staticmethod
+    def projection_score(binary):
+        projection = np.sum(binary == 255, axis=1)
+        return np.var(projection)
+    @staticmethod
+    def rotate(image, angle):
+        h, w = image.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(
+            center,
+            angle,
+            1.0
+        )
+        rotated = cv2.warpAffine(
+            image,
+            M,
+            (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255
+        )
+        return rotated
+    def find_best_angle(self, binary):
+        best_angle = 0
+        best_score = -1
+        for angle in np.arange(
+            self.angle_range[0],
+            self.angle_range[1] + self.coarse_step,
+            self.coarse_step
+        ):
+            rotated = self.rotate(binary, angle)
+            score = self.projection_score(rotated)
+            if score > best_score:
+                best_score = score
+                best_angle = angle
+        fine_start = best_angle - 0.5
+        fine_end = best_angle + 0.5
+        best_score = -1
+        for angle in np.arange(
+            fine_start,
+            fine_end + self.fine_step,
+            self.fine_step
+        ):
+            rotated = self.rotate(binary, angle)
+            score = self.projection_score(rotated)
+            if score > best_score:
+                best_score = score
+                best_angle = angle
+        return best_angle
+    def process(self, image):
+        gray = cv2.cvtColor(
+            image,
+            cv2.COLOR_BGR2GRAY
+        )
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        angle = self.find_best_angle(binary)
+        corrected = self.rotate(image, angle)
+        return corrected, angle
+</file>
+
+<file path="src/line_detector.py">
+import cv2
+import numpy as np
+class LineDetector:
+    def __init__(
+        self,
+        left_ratio=0.05,
+        right_ratio=0.50,
+        expected_x=None,
+        tolerance=None
+    ):
+        self.left_ratio = left_ratio
+        self.right_ratio = right_ratio
+        self.expected_x = expected_x
+        self.tolerance = tolerance
+    def detect(self, vertical):
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            vertical,
+            connectivity=8
+        )
+        h, w = vertical.shape
+        LEFT_LIMIT = int(w * self.left_ratio)
+        RIGHT_LIMIT = int(w * self.right_ratio)
+        output = cv2.cvtColor(vertical, cv2.COLOR_GRAY2BGR)
+        candidates = []
+        for i in range(1, num_labels):
+            x = stats[i, cv2.CC_STAT_LEFT]
+            y = stats[i, cv2.CC_STAT_TOP]
+            width = stats[i, cv2.CC_STAT_WIDTH]
+            height = stats[i, cv2.CC_STAT_HEIGHT]
+            area = stats[i, cv2.CC_STAT_AREA]
+            reason = None
+            if height < h * 0.50:
+                reason = f"Too short ({height}px)"
+            elif ( height / width) < 40:
+                reason = f"Poor aspect ratio ({(height / width):.1f})"
+            elif x < LEFT_LIMIT:
+                reason = f"Too close to left border (x={x})"
+            elif x > RIGHT_LIMIT:
+                reason = f"Outside left half (x={x})"
+            if reason is not None:
+                print(
+                    f"Rejected Component {i} | "
+                    f"x={x}, y={y}, w={width}, h={height} | "
+                    f"Reason: {reason}"
+                )
+                continue
+            component_mask = np.zeros_like(vertical)
+            component_mask[labels == i] = 255
+            points = np.column_stack(np.where(component_mask > 0))
+            candidate = {
+                "x": x,
+                "y": y,
+                "w": width,
+                "h": height,
+                "area": area,
+                "mask": component_mask,
+                "points": points
+            }
+            candidates.append(candidate)
+            cv2.rectangle(
+                output,
+                (x, y),
+                (x + width, y + height),
+                (0, 255, 0),
+                2
+            )
+            print("\nValid Candidates")
+            for c in candidates:
+                print(
+                    f"x={c['x']}, "
+                    f"h={c['h']}, "
+                    f"w={c['w']}, "
+                    f"area={c['area']}"
+                )
+        # ------------------------------------------------
+        # No candidates
+        # ------------------------------------------------
+        if len(candidates) == 0:
+            return output, None
+        # ------------------------------------------------
+        # If we know approximately where the separator is,
+        # choose the closest candidate.
+        # ------------------------------------------------
+        if self.expected_x is not None:
+            if self.tolerance is not None:
+                filtered = []
+                for c in candidates:
+                    if abs(c["x"] - self.expected_x) <= self.tolerance:
+                        filtered.append(c)
+                if len(filtered) > 0:
+                    candidates = filtered
+            best = min(
+                candidates,
+                key=lambda c: abs(c["x"] - self.expected_x)
+            )
+        else:
+            best = min(
+                candidates,
+                key=lambda c: c["x"]
+            )
+        cv2.rectangle(
+            output,
+            (best["x"], best["y"]),
+            (best["x"] + best["w"], best["y"] + best["h"]),
+            (0, 0, 255),
+            4
+        )
+        print("\nSelected Candidate")
+        print(best)
+        return output, best
+</file>
+
+<file path="src/lmstudio_preprocessor.py">
+import cv2
+import numpy as np
+class LMStudioPreprocessor:
+    def __init__(self):
+        self.kernel = np.array([
+            [0, -1, 0],
+            [-1, 5, -1],
+            [0, -1, 0]
+        ], dtype=np.float32)
+    def process(self, image):
+        if len(image.shape) == 2:
+            gray = image.copy()
+        else:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        denoised = cv2.fastNlMeansDenoising(
+            gray,
+            None,
+            h=10,
+            templateWindowSize=7,
+            searchWindowSize=21
+        )
+        sharpened = cv2.filter2D(
+            denoised,
+            -1,
+            self.kernel
+        )
+        return sharpened
+</file>
+
+<file path="src/ocr_preprocessor.py">
+import cv2
+import numpy as np
+from pathlib import Path
+class OCRPreprocessor:
+    def __init__(
+        self,
+        method="connected_components",
+        scale=4,
+        min_area=200,
+        bilateral_d=9,
+        bilateral_sigma_color=75,
+        bilateral_sigma_space=75,
+        kernel_size=2,
+        iterations=1,
+        gamma=2.0,
+        rolling_radius=80
+    ):
+        self.method = method.lower()
+        self.scale = scale
+        self.min_area = min_area
+        self.bilateral_d = bilateral_d
+        self.bilateral_sigma_color = bilateral_sigma_color
+        self.bilateral_sigma_space = bilateral_sigma_space
+        self.kernel_size = kernel_size
+        self.iterations = iterations
+        self.gamma_value = gamma
+        self.rolling_radius = rolling_radius
+        self.methods = {
+            "connected_components": self.connected_components,
+            "otsu": self.otsu,
+            "morph_close": self.morph_close,
+            "morph_dilate": self.morph_dilate,
+            "bilateral_otsu": self.bilateral_otsu,
+            "full_pipeline": self.full_pipeline,
+        }
+        print("\nRegistered preprocessing methods:")
+        for name, fn in self.methods.items():
+            print(f"{name:25} -> {type(fn)}")
+    # --------------------------------------------------
+    # Utilities
+    # --------------------------------------------------
+    def to_gray(self, image):
+        if len(image.shape) == 3:
+            return cv2.cvtColor(
+                image,
+                cv2.COLOR_BGR2GRAY
+            )
+        return image.copy()
+    def upscale(self, gray):
+        return cv2.resize(
+            gray,
+            None,
+            fx=self.scale,
+            fy=self.scale,
+            interpolation=cv2.INTER_CUBIC
+        )
+    def connected_components(self, gray):
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            binary,
+            connectivity=8
+        )
+        clean = np.zeros_like(binary)
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area >= self.min_area:
+                clean[labels == i] = 255
+        return clean
+    def otsu(self, gray):
+        denoised = cv2.fastNlMeansDenoising(
+            gray,
+            h=10
+        )
+        _, binary = cv2.threshold(
+            denoised,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        return binary
+    def morph_close(self, gray):
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+        kernel = np.ones(
+            (
+                self.kernel_size,
+                self.kernel_size
+            ),
+            np.uint8
+        )
+        return cv2.morphologyEx(
+            binary,
+            cv2.MORPH_CLOSE,
+            kernel
+        )
+    def morph_dilate(self, gray):
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        kernel = np.ones(
+            (
+                self.kernel_size,
+                self.kernel_size
+            ),
+            np.uint8
+        )
+        return cv2.dilate(
+            binary,
+            kernel,
+            iterations=self.iterations
+        )
+    def bilateral_otsu(self, gray):
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        return binary
+    def full_pipeline(self, gray):
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        kernel = np.ones(
+            (
+                self.kernel_size,
+                self.kernel_size
+            ),
+            np.uint8
+        )
+        return cv2.morphologyEx(
+            binary,
+            cv2.MORPH_CLOSE,
+            kernel
+        )
+    # --------------------------------------------------
+    # Main Interface
+    # --------------------------------------------------
+    def process(self, image):
+        gray = self.to_gray(image)
+        gray = self.upscale(gray)
+        if self.method not in self.methods:
+            raise ValueError(
+                f"Unknown preprocessing method: {self.method}"
+            )
+        processed = self.methods[self.method](gray)
+        return gray, processed
+    def available_methods(self):
+        """Return all registered preprocessing methods."""
+        return list(self.methods.keys())
+    def process_method(self, image, method):
+        """
+        Process an image using a specific preprocessing method.
+        """
+        if method not in self.methods:
+            raise ValueError(f"Unknown preprocessing method: {method}")
+        gray = self.to_gray(image)
+        gray = self.upscale(gray)
+        processed = self.methods[method](gray.copy())
+        return gray, processed
+    def benchmark(self, image):
+        """
+        Run every preprocessing method on the same image.
+        """
+        gray = self.to_gray(image)
+        gray = self.upscale(gray)
+        outputs = {}
+        for method in self.available_methods():
+            outputs[method] = self.methods[method](gray.copy())
+        return gray, outputs
+    def save_benchmark(self, outputs, output_dir):
+        """
+        Save all benchmark images.
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for name, image in outputs.items():
+            cv2.imwrite(
+                str(output_dir / f"{name}.png"),
+                image
+            )
+</file>
+
+<file path="src/page_preprocessor.py">
+class PagePreprocessor:
+    def process(self, image):
+        return image
+</file>
+
+<file path="src/pdf_loader.py">
+from pathlib import Path
+import fitz
+import cv2
+import numpy as np
+class PDFLoader:
+    def __init__(
+        self,
+        dpi: int = 300,
+        save_debug: bool = False,
+        output_dir: str | None = None,
+    ):
+        self.dpi = dpi
+        self.save_debug = save_debug
+        self.output_dir = Path(output_dir) if output_dir else None
+        if self.save_debug and self.output_dir:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+    def load_pdf(self, pdf_path: str):
+        pdf_path = Path(pdf_path)
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"{pdf_path} not found.")
+        document = fitz.open(pdf_path)
+        pages = []
+        zoom = self.dpi / 72
+        matrix = fitz.Matrix(zoom, zoom)
+        print("=" * 60)
+        print("Loading PDF")
+        print("=" * 60)
+        print(f"File : {pdf_path.name}")
+        print(f"Pages: {len(document)}")
+        print(f"DPI  : {self.dpi}")
+        print("=" * 60)
+        for page_number in range(len(document)):
+            page = document.load_page(page_number)
+            pix = page.get_pixmap(
+                matrix=matrix,
+                alpha=False
+            )
+            image = np.frombuffer(
+                pix.samples,
+                dtype=np.uint8
+            ).reshape(
+                pix.height,
+                pix.width,
+                pix.n
+            )
+            image = cv2.cvtColor(
+                image,
+                cv2.COLOR_RGB2BGR
+            )
+            pages.append(image)
+            if self.save_debug:
+                filename = (
+                    self.output_dir /
+                    f"page_{page_number+1:03d}.png"
+                )
+                cv2.imwrite(
+                    str(filename),
+                    image
+                )
+        document.close()
+        print(f"Successfully loaded {len(pages)} pages.")
+        return pages
+</file>
+
+<file path="src/pipeline.py">
+from main import folder
+from pathlib import Path
+from src.pdf_loader import PDFLoader
+from src.deskewer import Deskewer
+from src.vertical_extractor import VerticalExtractor
+from src.line_detector import LineDetector
+from src.cropper import Cropper
+from src.page_preprocessor import PagePreprocessor
+from src.ocr_preprocessor import OCRPreprocessor
+from src.annotation_detector import AnnotationDetector
+from src.roi_text_extractor import ROITextExtractor
+import cv2
+import pandas as pd
+class OCRPipeline:
+    def __init__(self, config):
+        self.config = config
+        self.input_dir = Path("data/input_pdfs")
+        self.output_dir = Path("outputs")
+        self.output_dir.mkdir(exist_ok=True)
+        self.loader = PDFLoader(
+            dpi=300,
+            save_debug=False
+        )
+        self.deskewer = Deskewer()
+        self.extractor = VerticalExtractor(
+            threshold=180,
+            kernel_height=None
+        )
+        self.line_detector = LineDetector()
+        self.cropper = Cropper(
+            right_padding=15
+        )
+        self.page_preprocessor = PagePreprocessor()
+        self.ocr_preprocessor = OCRPreprocessor(
+            method="connected_components"
+        )
+        self.annotation_detector = AnnotationDetector()
+        self.text_extractor = ROITextExtractor(
+            backend=config.OCR_BACKEND
+        )
+        self.summary = []
+    def save_debug_image(self, folder, filename, image):
+        if not self.config.SAVE_DEBUG_IMAGES:
+            return
+        cv2.imwrite(
+            str(folder / filename),
+            image
+        )
+    def run(self):
+        pdf_files = sorted(
+            self.input_dir.glob("*.pdf")
+        )
+        print(
+            f"\nFound {len(pdf_files)} PDF(s)\n"
+        )
+        for pdf_path in pdf_files:
+            self.process_pdf(pdf_path)
+        self.save_summary()
+    def process_pdf(self, pdf_path):
+        pdf_name = pdf_path.stem
+        print("=" * 70)
+        print(f"Processing : {pdf_name}")
+        print("=" * 70)
+        # --------------------------------------------------
+        # Output Directories
+        # --------------------------------------------------
+        pdf_output = self.output_dir / pdf_name
+        folders = {
+            "deskew": pdf_output / "deskewed",
+            "vertical": pdf_output / "vertical",
+            "detected": pdf_output / "detected",
+            "cropped": pdf_output / "cropped",
+            "preprocessed": pdf_output / "preprocessed",
+            "recognizer": pdf_output / "recognizer",
+            "roi": pdf_output / "roi",
+            "ocr": pdf_output / "ocr",
+            "failed": pdf_output / "failed"
+        }
+        for folder in folders.values():
+            folder.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+        pages = self.loader.load_pdf(
+            str(pdf_path)
+        )
+        results = []
+        for page_idx, page in enumerate(pages):
+            print(f"\nPage {page_idx + 1}")
+            page_result = self.process_page(
+                page=page,
+                page_idx=page_idx,
+                folders=folders
+            )
+            results.append(page_result)
+        # --------------------------------------------------
+        # Export Report
+        # --------------------------------------------------
+        self.save_report(
+            pdf_name,
+            pdf_output,
+            results
+        )
+    def process_page(
+        self,
+        page,
+        page_idx,
+        folders
+    ):
+        print(
+            f"Processing Page {page_idx + 1}"
+        )
+        page = self.page_preprocessor.process(page)
+        corrected, angle = self.deskewer.process(page)
+        cv2.imwrite(
+            str(folders["deskew"] / f"page_{page_idx+1:03d}.png"),
+            corrected
+        )
+        vertical, debug = self.extractor.extract(corrected)
+        cv2.imwrite(
+            str(folders["vertical"] / f"page_{page_idx+1:03d}.png"),
+            vertical
+        )
+        detected, separator = self.line_detector.detect(vertical)
+        cv2.imwrite(
+            str(folders["detected"] / f"page_{page_idx+1:03d}.png"),
+            detected
+        )
+        if separator is None:
+            print("Separator : FAILED")
+            cv2.imwrite(
+                str(folders["failed"] / f"page_{page_idx+1:03d}_gray.png"),
+                debug["gray"]
+            )
+            cv2.imwrite(
+                str(folders["failed"] / f"page_{page_idx+1:03d}_binary.png"),
+                debug["binary"]
+            )
+            cv2.imwrite(
+                str(folders["failed"] / f"page_{page_idx+1:03d}_vertical.png"),
+                vertical
+            )
+            return {
+                "page": page_idx + 1,
+                "status": "FAILED",
+                "deskew_angle": angle,
+                "separator_x": None,
+                "width": None,
+                "height": None,
+            }
+        crop = self.cropper.crop(
+            corrected,
+            separator
+        )
+        cv2.imwrite(
+            str(folders["cropped"] / f"page_{page_idx+1:03d}.png"),
+            crop
+        )
+        gray, binary = self.preprocessor.process(crop)
+        cv2.imwrite(
+            str(folders["preprocessed"] / f"page_{page_idx+1:03d}_gray.png"),
+            gray
+        )
+        cv2.imwrite(
+            str(folders["preprocessed"] / f"page_{page_idx+1:03d}_binary.png"),
+            binary
+        )
+        if self.config.USE_ANNOTATION_DETECTION:
+            print("Mode : ROI OCR")
+            rois, debug = self.annotation_detector.detect(gray, binary)
+            if self.config.SAVE_ROIS:
+                for i, roi in enumerate(rois):
+                    cv2.imwrite(
+                        str(
+                            folders['roi'] /
+                            f"page_{page_idx+1:03d}_roi_{i+1}.png"
+                        ),
+                        roi["roi"]
+                    )
+            if self.config.SAVE_DEBUG_IMAGES:
+                cv2.imwrite(
+                    str(
+                        folders['recognizer'] /
+                        f"page_{page_idx+1:03d}.png"
+                    ),
+                    debug["detected"]
+                )
+            extracted_text = self.text_extractor.extract(
+                gray,
+                rois
+            )
+        else:
+            print("Mode : Full Margin OCR")
+            extracted_text = self.text_extractor.extract(
+                gray
+            )
+        if len(extracted_text) > 0:
+            ocr_df = pd.DataFrame(extracted_text)
+            ocr_df.to_csv(
+                folders['ocr'] /
+                f"page_{page_idx+1:03d}.csv",
+                index=False
+            )
+            print("\nOCR Results")
+            for item in extracted_text:
+                print(
+                    f"Block {item['block_id']}: "
+                    f"{item['text']}"
+                )
+        else:
+            print("No text detected.")
+        print(f"Separator : {separator['x']}")
+        return {
+            "page": page_idx + 1,
+            "status": "SUCCESS",
+            "deskew_angle": angle,
+            "separator_x": separator["x"],
+            "width": separator["w"],
+            "height": separator["h"],
+        }
+    def save_report(
+        self,
+        pdf_name,
+        pdf_output,
+        results
+    ):
+        print(
+            f"Saving report for {pdf_name}"
+        )
+        # ==============================================
+        # Save Report
+        # ==============================================
+        df = pd.DataFrame(results)
+        df.to_csv(
+            pdf_output / "report.csv",
+            index=False
+        )
+        success = df[df["status"] == "SUCCESS"]
+        self.summary.append({
+            "pdf": pdf_name,
+            "pages": len(df),
+            "success":
+                (df["status"] == "SUCCESS").sum(),
+            "failed":
+                (df["status"] == "FAILED").sum(),
+            "mean_separator_x":
+                success["separator_x"].mean()
+                if len(success) else None,
+            "std_separator_x":
+                success["separator_x"].std()
+                if len(success) else None
+        })
+    def save_summary(self):
+        summary_df = pd.DataFrame(self.summary)
+        summary_df.to_csv(
+            self.output_dir / "summary.csv",
+            index=False
+        )
+        print("\n")
+        print("=" * 70)
+        print("Pipeline Finished")
+        print("=" * 70)
+</file>
+
+<file path="src/preprocessor.py">
+import cv2
+import numpy as np
+class Preprocessor:
+    def __init__(self, min_area=200):
+        self.min_area = min_area
+    def process(self, image):
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(
+                image,
+                cv2.COLOR_BGR2GRAY
+            )
+        else:
+            gray = image.copy()
+        _, binary = cv2.threshold(
+            gray,
+            0,
+            255,
+            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            binary,
+            connectivity=8
+        )
+        clean = np.zeros_like(binary)
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area >= self.min_area:
+                clean[labels == i] = 255
+        return gray, clean
+</file>
+
+<file path="src/roi_text_extractor.py">
+from src.config import PipelineConfig
+from src.ocr import create_backend
+class ROITextExtractor:
+    def __init__(self, backend=None, use_backend_preprocessing=True):
+        backend = backend or PipelineConfig.OCR_BACKEND
+        self.ocr = create_backend(backend)
+        self.use_backend_preprocessing = use_backend_preprocessing
+    def extract(self, image, rois=None):
+        predictions = []
+        if rois is None:
+            result = self.ocr.read(
+                image,
+                preprocess=self.use_backend_preprocessing
+            )
+            if isinstance(result, list):
+                predictions.extend(result)
+            else:
+                predictions.append(result)
+        else:
+            for roi in rois:
+                result = self.ocr.read(roi["roi"])
+                if isinstance(result, list):
+                    predictions.extend(result)
+                else:
+                    predictions.append(result)
+        results = []
+        for idx, item in enumerate(predictions):
+            results.append({
+                "block_id": idx + 1,
+                "text": item.get("text", "")
+            })
+        return results
+</file>
+
+<file path="src/vertical_extractor.py">
+import cv2
+import numpy as np
+class VerticalExtractor:
+    def __init__(self,
+                 threshold=180,
+                 kernel_height=120):
+        self.threshold = threshold
+        self.kernel_height = kernel_height
+    def extract(self, image):
+        debug = {}
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        debug["gray"] = gray
+        _, binary = cv2.threshold(
+            gray,
+            self.threshold,
+            255,
+            cv2.THRESH_BINARY_INV
+        )
+        debug["binary"] = binary
+        height, width = image.shape[:2]
+        kernel_height = max(80, height // 25)
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (1, kernel_height)
+        )
+        repair_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (3, 15)
+        )
+        binary = cv2.morphologyEx(
+            binary,
+            cv2.MORPH_CLOSE,
+            repair_kernel
+        )
+        vertical_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (1, kernel_height)
+        )
+        vertical = cv2.morphologyEx(
+            binary,
+            cv2.MORPH_OPEN,
+            vertical_kernel
+        )
+        debug["vertical"] = vertical
+        print("Inside VerticalExtractor")
+        print(vertical.shape)
+        print(vertical.dtype)
+        print(np.unique(vertical))
+        return vertical, debug
+</file>
+
+<file path="tests/__init__.py">
+
+</file>
+
+<file path="tests/test_denoise.py">
+from pathlib import Path
+import cv2
+import numpy as np
+INPUT_DIR = Path(r"G:\OCR_codes\outputs\P4\cropped")
+OUTPUT_DIR = Path(r"G:\OCR_codes\denoised")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+MIN_AREA = 200
+png_files = sorted(INPUT_DIR.glob("*.png"))
+print(f"Found {len(png_files)} image(s)\n")
+for img_path in png_files:
+    print(f"Processing: {img_path.name}")
+    # -----------------------------
+    # Load image
+    # -----------------------------
+    img = cv2.imread(
+        str(img_path),
+        cv2.IMREAD_GRAYSCALE
+    )
+    if img is None:
+        print(f"Failed to read {img_path.name}")
+        continue
+    # -----------------------------
+    # Threshold
+    # -----------------------------
+    _, binary = cv2.threshold(
+        img,
+        0,
+        255,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+    # -----------------------------
+    # Connected Components
+    # -----------------------------
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8
+    )
+    # -----------------------------
+    # Remove small components
+    # -----------------------------
+    clean = np.zeros_like(binary)
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area >= MIN_AREA:
+            clean[labels == i] = 255
+    # -----------------------------
+    # Save
+    # -----------------------------
+    output_path = OUTPUT_DIR / img_path.name
+    cv2.imwrite(
+        str(output_path),
+        255 - clean
+    )
+    print(f"  Components : {num_labels - 1}")
+print("\nDone!")
+</file>
+
+<file path="tests/test_deskew.py">
+from pathlib import Path
+from src.pdf_loader import PDFLoader
+from src.deskewer import Deskewer
+import cv2
+loader = PDFLoader(
+    dpi=300,
+    save_debug=False
+)
+pages = loader.load_pdf(
+    "data/input_pdfs/P5.pdf"
+)
+deskewer = Deskewer()
+output = Path("deskew_results")
+output.mkdir(exist_ok=True)
+angles = []
+for i, page in enumerate(pages):
+    corrected, angle = deskewer.process(page)
+    import hashlib
+    print(
+        f"Page {i + 1 if 'page_idx' in locals() else i + 1}"
+    )
+    print("Angle :", angle)
+    print(
+        "Checksum :",
+        hashlib.md5(corrected.tobytes()).hexdigest()
+    )
+    angles.append(angle)
+    print(f"Page {i+1:02d} : {angle:.2f}°")
+    cv2.imwrite(
+        str(output / f"page_{i+1:03d}.png"),
+        corrected
+    )
+print("\nAverage Angle :", sum(angles) / len(angles))
+</file>
+
+<file path="tests/test_detect_text.py">
+import cv2
+import numpy as np
+IMAGE_PATH = r"D:\OCR_codes\outputs\P5 (1)\roi\page_008.png"
+Y_THRESHOLD = 20
+MIN_CONTOUR_AREA = 10
+PADDING = 10
+img = cv2.imread(IMAGE_PATH)
+output = img.copy()
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+_, binary = cv2.threshold(
+    gray,
+    0,
+    255,
+    cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+)
+contours, _ = cv2.findContours(
+    binary,
+    cv2.RETR_EXTERNAL,
+    cv2.CHAIN_APPROX_SIMPLE
+)
+boxes = []
+for cnt in contours:
+    area = cv2.contourArea(cnt)
+    if area < 40:
+        continue
+    x, y, w, h = cv2.boundingRect(cnt)
+    if w < 4 or h < 4:
+        continue
+    if h > 80 and w < 4:
+        continue
+    if w > 80 and h < 4:
+        continue
+    margin = 2
+    if (
+        x <= margin or
+        y <= margin or
+        x + w >= img.shape[1] - margin or
+        y + h >= img.shape[0] - margin
+    ):
+        continue
+    cy = y + h // 2
+    x, y, w, h = cv2.boundingRect(cnt)
+    cy = y + h // 2
+    boxes.append({
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "cy": cy
+    })
+boxes.sort(key=lambda b: b["cy"])
+groups = []
+for box in boxes:
+    assigned = False
+    for group in groups:
+        if abs(box["cy"] - group["cy"]) < Y_THRESHOLD:
+            group["boxes"].append(box)
+            ys = [b["cy"] for b in group["boxes"]]
+            group["cy"] = np.mean(ys)
+            assigned = True
+            break
+    if not assigned:
+        groups.append({
+            "cy": box["cy"],
+            "boxes": [box]
+        })
+for group in groups:
+    xs = []
+    ys = []
+    xe = []
+    ye = []
+    for b in group["boxes"]:
+        xs.append(b["x"])
+        ys.append(b["y"])
+        xe.append(b["x"] + b["w"])
+        ye.append(b["y"] + b["h"])
+    x1 = max(0, min(xs) - PADDING)
+    y1 = max(0, min(ys) - PADDING)
+    x2 = min(img.shape[1], max(xe) + PADDING)
+    y2 = min(img.shape[0], max(ye) + PADDING)
+    cv2.rectangle(
+        output,
+        (x1, y1),
+        (x2, y2),
+        (0, 255, 0),
+        2
+    )
+cv2.imwrite("detected_lines.png", output)
+print("Done.")
+</file>
+
+<file path="tests/test_mistral_local.py">
+import base64
+import json
+import re
+from pathlib import Path
+from openai import OpenAI
+from PIL import Image, ImageDraw, ImageFont
+IMAGE_PATH = r"G:\OCR_codes\outputs\P5\cropped\page_008.png"
+OUTPUT_PATH = r"G:\OCR_codes\page_008_annotated.png"
+MODEL = "google/gemma-3-12b"
+client = OpenAI(
+    base_url="http://127.0.0.1:1234/v1",
+    api_key="lm-studio",
+)
+with open(IMAGE_PATH, "rb") as f:
+    image_b64 = base64.b64encode(f.read()).decode()
+prompt = """
+You are a precise OCR engine.
+Your task is to detect every visible text element and localize it accurately.
+IMPORTANT
+- Measure coordinates from the ORIGINAL image.
+- Ignore any internal resizing.
+- Coordinates must be normalized to the ORIGINAL image.
+- Left edge = 0
+- Right edge = 1
+- Top edge = 0
+- Bottom edge = 1
+Every coordinate must correspond to the actual visible location of the text in the image.
+Do not estimate.
+If the exact position is uncertain, inspect the image again before returning coordinates.
+For every text:
+1. Find the tightest possible bounding rectangle.
+2. Return the normalized bounding box.
+3. Compute the center of that box.
+Return ONLY valid JSON.
+[
+    {
+        "text":"...",
+        "bounding_box":{
+            "left":0.000,
+            "top":0.000,
+            "right":0.000,
+            "bottom":0.000
+        },
+        "center":{
+            "x":0.000,
+            "y":0.000
+        }
+    }
+]
+"""
+response = client.chat.completions.create(
+    model=MODEL,
+    temperature=0,
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt,
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{image_b64}"
+                    },
+                },
+            ],
+        }
+    ],
+)
+content = response.choices[0].message.content
+print("========== RAW RESPONSE ==========")
+print(content)
+# ============================
+# Clean JSON
+# ============================
+content = re.sub(r"^```json\s*", "", content.strip())
+content = re.sub(r"^```\s*", "", content)
+content = re.sub(r"\s*```$", "", content)
+try:
+    results = json.loads(content)
+except Exception as e:
+    print("\nCould not parse JSON.")
+    print(e)
+    raise
+# ============================
+# Draw Results
+# ============================
+image = Image.open(IMAGE_PATH).convert("RGB")
+draw = ImageDraw.Draw(image)
+orig_w, orig_h = image.size
+X_OFFSET = 25
+Y_OFFSET = 0
+X_SCALE = 1.00
+Y_SCALE = 1.00
+print(f"Original image : {orig_w} x {orig_h}")
+# ----------------------------------------
+# Change this to True to test swapped x/y
+# ----------------------------------------
+SWAP_XY = False
+try:
+    font = ImageFont.truetype("arial.ttf", 18)
+except:
+    font = ImageFont.load_default()
+def convert_point(x, y):
+    if 0 <= x <= 1 and 0 <= y <= 1:
+        x *= orig_w
+        y *= orig_h
+    if SWAP_XY:
+        x, y = y, x
+    x = x * X_SCALE + X_OFFSET
+    y = y * Y_SCALE + Y_OFFSET
+    return int(round(x)), int(round(y))
+PADDING = 3
+for item in results:
+    text = item.get("text", "")
+    # -------------------------
+    # Bounding Box
+    # -------------------------
+    bbox = item.get("bounding_box")
+    if bbox:
+        x1, y1 = convert_point(
+            bbox["left"],
+            bbox["top"],
+        )
+        x2, y2 = convert_point(
+            bbox["right"],
+            bbox["bottom"],
+        )
+        x1 -= PADDING
+        y1 -= PADDING
+        x2 += PADDING
+        y2 += PADDING
+        draw.rectangle(
+            [(x1, y1), (x2, y2)],
+            outline="red",
+            width=2,
+        )
+        draw.text(
+            (x1, max(0, y1 - 18)),
+            text,
+            fill="blue",
+            font=font,
+        )
+    center = item.get("center")
+    if center:
+        cx, cy = convert_point(
+            center["x"],
+            center["y"],
+        )
+        draw.ellipse(
+            (cx - 3, cy - 3, cx + 3, cy + 3),
+            fill="green",
+        )
+Path(OUTPUT_PATH).parent.mkdir(parents=True, exist_ok=True)
+image.save(OUTPUT_PATH)
+print("\nSaved to:")
+print(OUTPUT_PATH)
+image.show()
+</file>
+
+<file path="tests/test_mistral.py">
+import os
+import sys
+import mimetypes
+import requests
+from dotenv import load_dotenv
+load_dotenv()
+API_KEY = os.getenv("MISTRAL_API_KEY")
+if API_KEY is None:
+    raise ValueError("MISTRAL_API_KEY not found in .env")
+BASE_URL = "https://api.mistral.ai"
+def upload_file(image_path):
+    mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+    headers = {
+        "Authorization": f"Bearer {API_KEY}"
+    }
+    with open(image_path, "rb") as f:
+        files = {
+            "file": (os.path.basename(image_path), f, mime_type)
+        }
+        data = {
+            "purpose": "ocr"
+        }
+        response = requests.post(
+            f"{BASE_URL}/v1/files",
+            headers=headers,
+            files=files,
+            data=data,
+        )
+    response.raise_for_status()
+    return response.json()
+def get_signed_url(file_id):
+    headers = {
+        "Authorization": f"Bearer {API_KEY}"
+    }
+    response = requests.get(
+        f"{BASE_URL}/v1/files/{file_id}/url",
+        headers=headers,
+    )
+    response.raise_for_status()
+    return response.json()["url"]
+def run_ocr(document_url):
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "mistral-ocr-latest",
+        "document": {
+            "type": "document_url",
+            "document_url": document_url,
+        },
+    }
+    response = requests.post(
+        f"{BASE_URL}/v1/ocr",
+        headers=headers,
+        json=payload,
+    )
+    response.raise_for_status()
+    return response.json()
+def main(image_path):
+    print("Uploading image...")
+    uploaded = upload_file(image_path)
+    file_id = uploaded["id"]
+    print("Uploaded:", file_id)
+    print("Generating signed URL...")
+    signed_url = get_signed_url(file_id)
+    print("Running OCR...")
+    result = run_ocr(signed_url)
+    print("\n========== OCR OUTPUT ==========\n")
+    for i, page in enumerate(result["pages"], start=1):
+        print(f"\n----- PAGE {i} -----\n")
+        print(page["markdown"])
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage:")
+        print("python test_mistral.py image.png")
+        sys.exit(1)
+    main(sys.argv[1])
+</file>
+
+<file path="tests/test_ocr.py">
+from pathlib import Path
+from src.ocr import OCR
+ocr = OCR(gpu=False)
+image = Path(
+    "outputs/P5/cropped/page_004.png"
+)
+result = ocr.read(image)
+print("\n" + "=" * 60)
+print("OCR RESULT")
+print("=" * 60)
+print("Text       :", result["text"])
+print("Confidence :", result["confidence"])
+print("\nDetected Words")
+for word in result["words"]:
+    print(word)
+</file>
+
+<file path="tests/test_overlap.py">
+import cv2
+import numpy as np
+from PIL import Image
+import torch
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+IMAGE_PATH = r"D:\OCR_codes\outputs\P1\cropped\page_003.png"
+WINDOW_HEIGHT = 96
+STRIDE = 32
+MIN_INK_PIXELS = 120
+MIN_COMPONENT_AREA = 30
+PADDING = 10
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+processor = TrOCRProcessor.from_pretrained(
+    "microsoft/trocr-base-handwritten"
+)
+model = VisionEncoderDecoderModel.from_pretrained(
+    "microsoft/trocr-base-handwritten"
+).to(DEVICE)
+img = cv2.imread(IMAGE_PATH)
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+H, W = gray.shape
+print(f"Image Size : {W} x {H}")
+window_id = 0
+# =====================================================
+# Sliding Window
+# =====================================================
+for y in range(0, H, STRIDE):
+    y2 = min(y + WINDOW_HEIGHT, H)
+    window = gray[y:y2, :]
+    if window.shape[0] < 40:
+        continue
+    # -----------------------------------------------
+    # Threshold
+    # -----------------------------------------------
+    _, binary = cv2.threshold(
+        window,
+        0,
+        255,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+    # -----------------------------------------------
+    # Ink Density Filter
+    # -----------------------------------------------
+    ink_pixels = cv2.countNonZero(binary)
+    if ink_pixels < MIN_INK_PIXELS:
+        continue
+    # -----------------------------------------------
+    # Connected Components
+    # -----------------------------------------------
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
+    candidates = []
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area < MIN_COMPONENT_AREA:
+            continue
+        x = stats[i, cv2.CC_STAT_LEFT]
+        yy = stats[i, cv2.CC_STAT_TOP]
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h = stats[i, cv2.CC_STAT_HEIGHT]
+        candidates.append((area, x, yy, w, h))
+    if len(candidates) == 0:
+        continue
+    # -----------------------------------------------
+    # Sort Largest First
+    # -----------------------------------------------
+    candidates.sort(reverse=True)
+    # OCR top 3 blobs
+    for blob_id, (_, x, yy, w, h) in enumerate(candidates[:3]):
+        x1 = max(0, x - PADDING)
+        y1 = max(0, yy - PADDING)
+        x2 = min(W, x + w + PADDING)
+        y2 = min(window.shape[0], yy + h + PADDING)
+        roi = window[y1:y2, x1:x2]
+        # Ignore tiny crops
+        if roi.shape[0] < 16 or roi.shape[1] < 16:
+            continue
+        # Upscale
+        roi = cv2.resize(
+            roi,
+            None,
+            fx=3,
+            fy=3,
+            interpolation=cv2.INTER_CUBIC
+        )
+        # RGB for TrOCR
+        pil = Image.fromarray(roi).convert("RGB")
+        pixel_values = processor(
+            images=pil,
+            return_tensors="pt"
+        ).pixel_values.to(DEVICE)
+        generated = model.generate(pixel_values)
+        text = processor.batch_decode(
+            generated,
+            skip_special_tokens=True
+        )[0].strip()
+        print("-" * 70)
+        print(f"Window : {window_id}")
+        print(f"Global Y : {y}-{y2}")
+        print(f"Blob : {blob_id}")
+        print(f"ROI : {roi.shape}")
+        print(f"Prediction : '{text}'")
+        cv2.imwrite(
+            f"window_{window_id:03d}_blob_{blob_id}.png",
+            roi
+        )
+    window_id += 1
+</file>
+
+<file path="tests/test_preprocessor.py">
+from pathlib import Path
+import cv2
+import matplotlib.pyplot as plt
+from src.preprocessor import Preprocessor
+processor = Preprocessor(scale=2)
+image = cv2.imread(
+    "outputs/P5/cropped/page_003.png"
+)
+results = processor.process(image)
+output = Path("outputs/preprocessing")
+output.mkdir(
+    parents=True,
+    exist_ok=True
+)
+for name, img in results.items():
+    filename = (
+        name.lower()
+        .replace(" + ", "_plus_")
+        .replace(" ", "_")
+    )
+    cv2.imwrite(
+        str(output / f"{filename}.png"),
+        img
+    )
+cols = 2
+rows = 2
+fig, axes = plt.subplots(
+    rows,
+    cols,
+    figsize=(15, 5 * rows)
+)
+axes = axes.flatten()
+for ax, (title, img) in zip(
+    axes,
+    results.items()
+):
+    ax.imshow(
+        img,
+        cmap="gray"
+    )
+    ax.set_title(
+        title,
+        fontsize=11,
+        fontweight="bold"
+    )
+    ax.axis("off")
+for i in range(len(results), len(axes)):
+    axes[i].axis("off")
+plt.tight_layout()
+comparison = output / "comparison.png"
+plt.savefig(
+    comparison,
+    dpi=250,
+    bbox_inches="tight"
+)
+plt.close()
+print("=" * 60)
+print("Saved comparison to")
+print(comparison)
+print("=" * 60)
+</file>
+
+<file path="tests/test_recognizer.py">
+from pathlib import Path
+import cv2
+from src.recognizer import Recognizer
+recognizer = Recognizer()
+image = cv2.imread(
+    "outputs/P5/cropped/page_003.png"
+)
+components, debug = recognizer.detect(image)
+print("=" * 60)
+print("Detected Components")
+print("=" * 60)
+for c in components:
+    print(c)
+output = Path("outputs/recognizer")
+output.mkdir(exist_ok=True)
+cv2.imwrite(
+    str(output / "gray.png"),
+    debug["gray"]
+)
+cv2.imwrite(
+    str(output / "binary.png"),
+    debug["binary"]
+)
+cv2.imwrite(
+    str(output / "detected.png"),
+    debug["detected"]
+)
+print("\nFinished")
+</file>
+
+<file path="tests/test_vertical.py">
+from pathlib import Path
+import cv2
+from src.pdf_loader import PDFLoader
+from src.vertical_extractor import VerticalExtractor
+from src.line_detector import LineDetector
+from src.deskewer import Deskewer
+loader = PDFLoader(
+    dpi=300,
+    save_debug=False
+)
+pages = loader.load_pdf(
+    "data/input_pdfs/P5.pdf"
+)
+extractor = VerticalExtractor(
+    threshold=180,
+    kernel_height=None
+)
+deskewer = Deskewer()
+detector = LineDetector()
+output_dir = Path("outputs")
+output_dir.mkdir(exist_ok=True)
+results = []
+for page_idx, page in enumerate(pages):
+    print("=" * 60)
+    print(f"Processing Page {page_idx+1}")
+    print("=" * 60)
+    # --------------------------------------------------
+    # Deskew
+    # --------------------------------------------------
+    corrected_page, angle = deskewer.process(page)
+    import hashlib
+    print(
+        f"Page {page_idx + 1 if 'page_idx' in locals() else i + 1}"
+    )
+    print("Angle :", angle)
+    print(
+        "Checksum :",
+        hashlib.md5(corrected_page.tobytes()).hexdigest()
+    )
+    print(f"Deskew Angle : {angle:.2f}°")
+    # --------------------------------------------------
+    # Vertical Extraction
+    # --------------------------------------------------
+    vertical, debug = extractor.extract(corrected_page)
+    detected, separator = detector.detect(vertical)
+    overlay = corrected_page.copy()
+    if separator is not None:
+        x = separator["x"]
+        cv2.line(
+            overlay,
+            (x, 0),
+            (x, overlay.shape[0]),
+            (0, 0, 255),
+            4
+        )
+    cv2.imwrite(
+        str(output_dir / f"page_{page_idx + 1:03d}_overlay.png"),
+        overlay
+    )
+    cv2.imwrite(
+        str(output_dir / f"page_{page_idx+1:03d}.png"),
+        detected
+    )
+    cv2.imwrite(
+        str(output_dir / f"page_{page_idx + 1:03d}_deskewed.png"),
+        corrected_page
+    )
+    if separator is None:
+        print("No separator detected")
+        results.append({
+            "page": page_idx + 1,
+            "status": "FAILED",
+            "deskew_angle": angle,
+            "separator_x": None
+        })
+        failed_dir = output_dir / "failed"
+        failed_dir.mkdir(exist_ok=True)
+        cv2.imwrite(
+            str(failed_dir / f"page_{page_idx + 1:03d}_gray.png"),
+            debug["gray"]
+        )
+        cv2.imwrite(
+            str(failed_dir / f"page_{page_idx + 1:03d}_binary.png"),
+            debug["binary"]
+        )
+        cv2.imwrite(
+            str(failed_dir / f"page_{page_idx + 1:03d}_vertical.png"),
+            vertical
+        )
+    else:
+        print(separator)
+        results.append({
+            "page": page_idx + 1,
+            "status": "SUCCESS",
+            "deskew_angle": angle,
+            "separator_x": separator["x"],
+            "width": separator["w"],
+            "height": separator["h"]
+        })
+print("\nFinished")
+import pandas as pd
+df = pd.DataFrame(results)
+df.to_csv(
+    output_dir / "separator_results.csv",
+    index=False
+)
+print(df)
+success = df[
+    (df["status"] == "SUCCESS") &
+    (df["separator_x"] > 100) &
+    (df["separator_x"] < 500)
+]
+if len(success) > 0:
+    mean_x = success["separator_x"].mean()
+    std_x = success["separator_x"].std()
+    print("\n" + "="*60)
+    print("Separator Statistics")
+    print("="*60)
+    print(f"Mean X : {mean_x:.2f}")
+    print(f"Std Dev: {std_x:.2f}")
+</file>
+
+<file path="main.py">
+from pathlib import Path
+import cv2
+import pandas as pd
+from src.pdf_loader import PDFLoader
+from src.deskewer import Deskewer
+from src.vertical_extractor import VerticalExtractor
+from src.line_detector import LineDetector
+from src.cropper import Cropper
+from src.annotation_detector import AnnotationDetector
+from src.preprocessor import Preprocessor
+from src.roi_text_extractor import ROITextExtractor
+from src.config import PipelineConfig
+config = PipelineConfig()
+INPUT_DIR = Path("data/input_pdfs")
+OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR.mkdir(exist_ok=True)
+loader = PDFLoader(
+    dpi=300,
+    save_debug=False
+)
+deskewer = Deskewer()
+extractor = VerticalExtractor(
+    threshold=180,
+    kernel_height=None
+)
+line_detector = LineDetector()
+cropper = Cropper(
+    right_padding=15
+)
+preprocessor = Preprocessor(
+)
+annotation_detector = AnnotationDetector()
+summary = []
+pdf_files = sorted(INPUT_DIR.glob("*.pdf"))
+print(f"\nFound {len(pdf_files)} PDF(s)\n")
+for pdf_path in pdf_files:
+    pdf_name = pdf_path.stem
+    print("=" * 70)
+    print(f"Processing : {pdf_name}")
+    print("=" * 70)
+    pdf_output = OUTPUT_DIR / pdf_name
+    deskew_dir = pdf_output / "deskewed"
+    vertical_dir = pdf_output / "vertical"
+    detected_dir = pdf_output / "detected"
+    cropped_dir = pdf_output / "cropped"
+    failed_dir = pdf_output / "failed"
+    preprocessed_dir = pdf_output / "preprocessed"
+    recognizer_dir = pdf_output / "recognizer"
+    roi_dir = pdf_output / "roi"
+    ocr_dir = pdf_output / "ocr"
+    for folder in [
+        deskew_dir,
+        vertical_dir,
+        detected_dir,
+        cropped_dir,
+        preprocessed_dir,
+        recognizer_dir,
+        roi_dir,
+        ocr_dir,
+        failed_dir
+    ]:
+        folder.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+    pages = loader.load_pdf(str(pdf_path))
+    results = []
+    for page_idx, page in enumerate(pages):
+        print(f"\nPage {page_idx + 1}")
+        # ------------------------------------------
+        # Deskew
+        # ------------------------------------------
+        corrected, angle = deskewer.process(page)
+        cv2.imwrite(
+            str(deskew_dir / f"page_{page_idx+1:03d}.png"),
+            corrected
+        )
+        vertical, debug = extractor.extract(corrected)
+        cv2.imwrite(
+            str(vertical_dir / f"page_{page_idx+1:03d}.png"),
+            vertical
+        )
+        detected, separator = line_detector.detect(vertical)
+        cv2.imwrite(
+            str(detected_dir / f"page_{page_idx+1:03d}.png"),
+            detected
+        )
+        if separator is None:
+            print("Separator : FAILED")
+            cv2.imwrite(
+                str(failed_dir / f"page_{page_idx+1:03d}_gray.png"),
+                debug["gray"]
+            )
+            cv2.imwrite(
+                str(failed_dir / f"page_{page_idx+1:03d}_binary.png"),
+                debug["binary"]
+            )
+            cv2.imwrite(
+                str(failed_dir / f"page_{page_idx+1:03d}_vertical.png"),
+                vertical
+            )
+            results.append({
+                "page": page_idx + 1,
+                "status": "FAILED",
+                "deskew_angle": angle,
+                "separator_x": None,
+                "width": None,
+                "height": None
+            })
+            continue
+        crop = cropper.crop(
+            corrected,
+            separator
+        )
+        cv2.imwrite(
+            str(cropped_dir / f"page_{page_idx+1:03d}.png"),
+            crop
+        )
+        gray, binary = preprocessor.process(crop)
+        cv2.imwrite(
+            str(preprocessed_dir / f"page_{page_idx + 1:03d}_gray.png"),
+            gray
+        )
+        cv2.imwrite(
+            str(preprocessed_dir / f"page_{page_idx + 1:03d}_binary.png"),
+            binary
+        )
+        if config.USE_ANNOTATION_DETECTION:
+            print("Mode : ROI OCR")
+            rois, debug = annotation_detector.detect(gray, binary)
+            if config.SAVE_ROIS:
+                for i, roi in enumerate(rois):
+                    cv2.imwrite(
+                        str(
+                            roi_dir /
+                            f"page_{page_idx+1:03d}_roi_{i+1}.png"
+                        ),
+                        roi["roi"]
+                    )
+            if config.SAVE_DEBUG_IMAGES:
+                cv2.imwrite(
+                    str(
+                        recognizer_dir /
+                        f"page_{page_idx+1:03d}.png"
+                    ),
+                    debug["detected"]
+                )
+        else:
+            print("Mode : Full Margin OCR")
+        print(f"Separator : {separator['x']}")
+        results.append({
+            "page": page_idx + 1,
+            "status": "SUCCESS",
+            "deskew_angle": angle,
+            "separator_x": separator["x"],
+            "width": separator["w"],
+            "height": separator["h"]
+        })
+    df = pd.DataFrame(results)
+    df.to_csv(
+        pdf_output / "report.csv",
+        index=False
+    )
+    success = df[df["status"] == "SUCCESS"]
+    summary.append({
+        "pdf": pdf_name,
+        "pages": len(df),
+        "success":
+            (df["status"] == "SUCCESS").sum(),
+        "failed":
+            (df["status"] == "FAILED").sum(),
+        "mean_separator_x":
+            success["separator_x"].mean()
+            if len(success) else None,
+        "std_separator_x":
+            success["separator_x"].std()
+            if len(success) else None
+    })
+summary_df = pd.DataFrame(summary)
+summary_df.to_csv(
+    OUTPUT_DIR / "summary.csv",
+    index=False
+)
+print("\n")
+print("=" * 70)
+print("Pipeline Finished")
+print("=" * 70)
+</file>
+
+<file path="README.md">
+# OCR & Annotation Extraction Pipeline
+
+An end-to-end Python pipeline designed for processing scanned PDF documents. The system performs page rendering, image deskewing, vertical separator line detection, margin/ROI cropping, preprocessing, annotation detection, and OCR text extraction using configurable backends (e.g., LM Studio vision models, TrOCR).
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Folder Structure](#folder-structure)
+- [System Setup Guide](#system-setup-guide)
+  - [1. Prerequisites](#1-prerequisites)
+  - [2. Clone & Navigate](#2-clone--navigate)
+  - [3. Set Up Virtual Environment](#3-set-up-virtual-environment)
+  - [4. Install Dependencies](#4-install-dependencies)
+  - [5. Environment Configuration](#5-environment-configuration)
+  - [6. OCR Backend Prerequisites (LM Studio / TrOCR)](#6-ocr-backend-prerequisites-lm-studio--trocr)
+- [Commands for Different Tasks](#commands-for-different-tasks)
+  - [Task 1: Run End-to-End OCR Pipeline](#task-1-run-end-to-end-ocr-pipeline)
+  - [Task 2: Build ROI Dataset from Input PDFs](#task-2-build-roi-dataset-from-input-pdfs)
+  - [Task 3: Run Preprocessing Benchmark](#task-3-run-preprocessing-benchmark)
+  - [Task 4: Run OCR Preprocessing Evaluation](#task-4-run-ocr-preprocessing-evaluation)
+  - [Task 5: Execute Unit Tests](#task-5-execute-unit-tests)
+- [Pipeline Configuration](#pipeline-configuration)
+
+---
+
+## Features
+
+- **PDF Ingestion & Rendering**: Renders PDF pages to high-resolution images via PyMuPDF (`fitz`).
+- **Deskewing**: Automatically estimates and corrects page rotation and skew angles.
+- **Vertical Line Detection**: Extracts margin vertical separation lines to isolate annotation zones.
+- **ROI & Margin Cropping**: Crops target text margins and extracts region-of-interest (ROI) annotation blocks.
+- **Image Preprocessing**: Enhances contrast (CLAHE, morphology, binarization, denoising) for high-accuracy OCR.
+- **Modular OCR Engines**: Pluggable backend support including **LM Studio** local Vision LLMs and HuggingFace **TrOCR**.
+- **Research Tools**: Utilities for dataset preparation, benchmarking preprocessing techniques, and evaluating OCR performance metrics.
+
+---
+
+## Folder Structure
+
+```text
+OCR_codes/
+│
+├── data/                            # Input and processed dataset directory
+│   ├── input_pdfs/                  # Source scanned PDF files to process
+│   └── roi_dataset/                 # Extracted Regions of Interest (ROIs) for research/training
+│
+├── denoised/                        # Denoised intermediate output images
+├── results/                         # Sample image processing pipeline test results
+│
+├── outputs/                         # Main output directory generated per PDF
+│   └── <pdf_name>/
+│       ├── cropped/                 # Cropped page margin images
+│       ├── deskewed/                # Deskewed page images
+│       ├── detected/                # Visualized detected vertical separator lines
+│       ├── failed/                  # Pages where line detection/processing failed
+│       ├── ocr/                     # CSV files containing extracted OCR text per page
+│       ├── preprocessed/            # Binary and grayscale preprocessed page images
+│       ├── recognizer/              # Annotation detection visual debug outputs
+│       ├── roi/                     # Saved individual ROI snippets
+│       └── report.csv               # Page-by-page execution report
+│   └── summary.csv                  # Aggregate execution summary across all processed PDFs
+│
+├── research/                        # Research, evaluation, and benchmark scripts
+│   ├── benchmark.py                 # Evaluates preprocessing methods on sample images
+│   ├── dataset.py                   # PyTorch dataset utility for fine-tuning / evaluation
+│   ├── evaluate.py                  # Runs preprocessor evaluation suite across ROI dataset
+│   ├── prepare_roi_dataset.py       # Extracts annotated ROIs from PDFs to build dataset
+│   └── results/                     # Evaluation results (CSV metrics and preprocessed images)
+│
+├── src/                             # Source code modules
+│   ├── ocr/                         # OCR engine implementations
+│   │   ├── base.py                  # Base class for OCR backends
+│   │   ├── factory.py               # Factory pattern to instantiate configured OCR backends
+│   │   ├── lmstudio.py              # LM Studio local Vision LLM backend integration
+│   │   └── trocr.py                 # HuggingFace TrOCR vision-transformer backend integration
+│   ├── annotation_detector.py       # Detects bounding boxes for handwritten or typed annotations
+│   ├── config.py                    # Global configuration dataclass (PipelineConfig)
+│   ├── cropper.py                   # Crops pages based on detected separator coordinates
+│   ├── deskewer.py                  # Page skew angle estimation and image rotation
+│   ├── line_detector.py             # Separator line locator
+│   ├── lmstudio_preprocessor.py     # Image preprocessing tailor-made for LM Studio input
+│   ├── ocr_preprocessor.py          # Multimodal image preprocessing library (CLAHE, Otsu, morph)
+│   ├── page_preprocessor.py         # Page-level preprocessor handler
+│   ├── pdf_loader.py                # Converts PDF pages to NumPy OpenCV images
+│   ├── pipeline.py                  # High-level pipeline controller
+│   ├── preprocessor.py              # Primary binarization and grayscale preprocessing pipeline
+│   ├── roi_text_extractor.py        # Connects ROIs to the active OCR backend
+│   └── vertical_extractor.py        # Isolates vertical lines via morphological operations
+│
+├── tests/                           # Unit test suite
+│   ├── test_denoise.py              # Tests for noise reduction algorithms
+│   ├── test_deskew.py               # Tests for deskewing module
+│   ├── test_detect_text.py          # Tests for text detection logic
+│   ├── test_mistral.py              # API client integration tests
+│   ├── test_mistral_local.py        # Local API backend integration tests
+│   ├── test_ocr.py                  # General OCR engine tests
+│   ├── test_overlap.py              # Tests for bounding box overlap and merging logic
+│   ├── test_preprocessor.py         # Tests for image preprocessing pipelines
+│   ├── test_recognizer.py           # Tests for text recognizer wrapper
+│   └── test_vertical.py             # Tests for vertical line extraction
+│
+├── .env                             # Environment variables (API keys, endpoint URLs)
+├── .gitignore                       # Git exclusion file
+├── main.py                          # Primary execution script for end-to-end OCR pipeline
+└── requirements.txt                 # Python dependencies manifest
+```
+
+---
+
+## System Setup Guide
+
+Follow these steps to set up and run the codebase on **Windows**, **macOS**, or **Linux**.
+
+### 1. Prerequisites
+- **Python 3.8+** (Python 3.10+ recommended)
+- **Git**
+- *(Optional)* **CUDA-capable GPU** with drivers installed if running local neural models (TrOCR/PyTorch) with hardware acceleration.
+
+Verify your Python installation:
+```bash
+python --version
+# or
+python3 --version
+```
+
+### 2. Clone & Navigate
+Clone the repository (or extract the source code) and change into the project root directory:
+```bash
+git clone <repository_url>
+cd OCR_codes
+```
+
+### 3. Set Up Virtual Environment
+
+It is recommended to use an isolated Python virtual environment:
+
+- **Windows (PowerShell):**
+  ```powershell
+  python -m venv venv
+  .\venv\Scripts\Activate.ps1
+  ```
+
+- **Windows (Command Prompt):**
+  ```cmd
+  python -m venv venv
+  venv\Scripts\activate.bat
+  ```
+
+- **macOS / Linux (Bash or Zsh):**
+  ```bash
+  python3 -m venv venv
+  source venv/bin/activate
+  ```
+
+### 4. Install Dependencies
+
+Upgrade `pip` and install all required libraries:
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+> **Note on PyTorch (GPU acceleration):**  
+> `requirements.txt` installs default PyTorch packages. If you want PyTorch with CUDA support on Windows/Linux, install CUDA-enabled PyTorch build from the [official PyTorch guide](https://pytorch.org/get-started/locally/):
+> ```bash
+> pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+> ```
+
+### 5. Environment Configuration
+
+Create or update the `.env` file in the root directory if using external APIs or custom server endpoints:
+
+```env
+MISTRAL_API_KEY=your_api_key_here
+```
+
+### 6. OCR Backend Prerequisites (LM Studio / TrOCR)
+
+- **LM Studio (Default Backend):**
+  - Download and start [LM Studio](https://lmstudio.ai/).
+  - Load a Vision LLM model (e.g., Qwen2-VL, Llama-3-Vision, or similar).
+  - Start the **Local Inference Server** inside LM Studio (default address: `http://localhost:1234`).
+- **TrOCR Backend:**
+  - Standard PyTorch environment; required models will automatically download from HuggingFace on first run.
+
+---
+
+## Commands for Different Tasks
+
+### Task 1: Run End-to-End OCR Pipeline
+Processes all input PDF files placed in `data/input_pdfs/` through deskewing, line detection, cropping, preprocessing, and OCR text extraction.
+
+1. **Place your PDF files:**
+   ```bash
+   mkdir -p data/input_pdfs
+   # Copy input .pdf files into data/input_pdfs/
+   ```
+
+2. **Execute the pipeline:**
+   ```bash
+   python main.py
+   ```
+
+3. **Check outputs:**
+   - Detailed results are saved in `outputs/<pdf_name>/` (CSV reports, crop images, deskewed images, extracted OCR text per page).
+   - An overall summary is saved to `outputs/summary.csv`.
+
+---
+
+### Task 2: Build ROI Dataset from Input PDFs
+Extracts region-of-interest (ROI) annotation crops from PDFs in `data/input_pdfs/` and saves them to `data/roi_dataset/`.
+
+```bash
+python research/prepare_roi_dataset.py
+```
+
+---
+
+### Task 3: Run Preprocessing Benchmark
+Applies various image preprocessing filters (CLAHE, Otsu binarization, morphological transformations, sharpening) to an input sample image (`sample_crop.png`) and outputs benchmarking visualizations to `research/results/images/`.
+
+```bash
+python research/benchmark.py
+```
+
+---
+
+### Task 4: Run OCR Preprocessing Evaluation
+Evaluates all available preprocessing techniques across the dataset stored in `data/roi_dataset/`, measuring processing speeds (ms), token densities, block counts, and text output quality.
+
+```bash
+python research/evaluate.py
+```
+
+Outputs metrics to `research/results/csv/evaluation.csv` and intermediate outputs to `research/results/preprocessed/`.
+
+---
+
+### Task 5: Execute Unit Tests
+Run the automated unittest suite to verify system logic across line detection, deskewing, OCR engines, preprocessors, and overlap algorithms.
+
+- **Run all unit tests:**
+  ```bash
+  python -m unittest discover -s tests
+  ```
+
+- **Run a specific test module (e.g., deskewer tests):**
+  ```bash
+  python -m unittest tests/test_deskew.py
+  ```
+
+- **Run vertical line extraction tests:**
+  ```bash
+  python -m unittest tests/test_vertical.py
+  ```
+
+---
+
+## Pipeline Configuration
+
+Customize execution parameters by modifying [src/config.py](file:///g:/OCR_codes/src/config.py):
+
+| Setting | Default Value | Description |
+| :--- | :--- | :--- |
+| `OCR_BACKEND` | `"lmstudio"` | Active OCR backend (`"lmstudio"` or `"trocr"`) |
+| `USE_ANNOTATION_DETECTION` | `False` | `True` enables ROI-based region extraction before OCR; `False` runs full margin OCR |
+| `SAVE_DEBUG_IMAGES` | `True` | Saves intermediate debug visualization images in `outputs/` |
+| `SAVE_ROIS` | `True` | Saves cropped ROI snippets to `outputs/<pdf>/roi/` |
+| `OCR_MAX_TOKENS` | `64` | Maximum token length for vision model generations |
+| `USE_OCR_PREPROCESSOR` | `True` | Applies image contrast/denoising preprocessor prior to OCR |
+
+---
+</file>
+
+<file path="requirements.txt">
+contourpy==1.3.3
+cycler==0.12.1
+easyocr==1.7.2
+filelock==3.29.7
+fonttools==4.63.0
+fsspec==2026.6.0
+ImageIO==2.37.3
+Jinja2==3.1.6
+kiwisolver==1.5.0
+lazy-loader==0.5
+MarkupSafe==3.0.3
+matplotlib==3.11.0
+mpmath==1.3.0
+networkx==3.6.1
+ninja==1.13.0
+numpy==2.5.1
+opencv-python==5.0.0.93
+opencv-python-headless==5.0.0.93
+packaging==26.2
+pandas==3.0.3
+pillow==12.3.0
+pyclipper==1.4.0
+pymupdf==1.28.0
+pyparsing==3.3.2
+python-bidi==0.6.11
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+scikit-image==0.26.0
+scipy==1.18.0
+setuptools==83.0.0
+shapely==2.1.2
+six==1.17.0
+sympy==1.14.0
+tifffile==2026.6.1
+torch==2.13.0
+torchvision==0.28.0
+typing_extensions==4.16.0
+tzdata==2026.2
+</file>
+
+</files>

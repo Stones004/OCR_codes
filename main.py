@@ -12,6 +12,9 @@ from src.annotation_detector import AnnotationDetector
 from src.preprocessor import Preprocessor
 from src.roi_text_extractor import ROITextExtractor
 from src.config import PipelineConfig
+from src.annotation_remover import AnnotationRemover
+import numpy as np
+
 
 """
 Annotation Extraction Pipeline
@@ -27,7 +30,8 @@ config = PipelineConfig()
 # Paths
 # --------------------------------------------------
 
-INPUT_DIR = Path("data/input_pdfs")
+#INPUT_DIR = Path("data/input_pdfs")
+INPUT_DIR = Path(r"G:\ICT_Scripts")
 OUTPUT_DIR = Path("outputs")
 
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -58,6 +62,8 @@ preprocessor = Preprocessor(
 )
 
 annotation_detector = AnnotationDetector()
+
+annotation_remover = AnnotationRemover()
 
 #text_extractor = ROITextExtractor(
 #    backend=config.OCR_BACKEND
@@ -92,6 +98,7 @@ for pdf_path in pdf_files:
     recognizer_dir = pdf_output / "recognizer"
     roi_dir = pdf_output / "roi"
     ocr_dir = pdf_output / "ocr"
+    annotation_removed_dir = pdf_output / "annotation_removed"
 
     for folder in [
         deskew_dir,
@@ -102,7 +109,8 @@ for pdf_path in pdf_files:
         recognizer_dir,
         roi_dir,
         ocr_dir,
-        failed_dir
+        failed_dir,
+        annotation_removed_dir
     ]:
         folder.mkdir(
             parents=True,
@@ -201,10 +209,43 @@ for pdf_path in pdf_files:
         )
 
         # ------------------------------------------
+        # Annotation Removal
+        # ------------------------------------------
+
+        if config.USE_ANNOTATION_REMOVAL:
+
+            clean_crop, mask = annotation_remover.process_debug(crop)
+
+        else:
+
+            clean_crop = crop
+
+            mask = np.zeros(
+                crop.shape[:2],
+                dtype=np.uint8
+            )
+
+        cv2.imwrite(
+            str(
+                annotation_removed_dir /
+                f"page_{page_idx+1:03d}.png"
+            ),
+            clean_crop
+        )
+
+        cv2.imwrite(
+            str(
+                annotation_removed_dir /
+                f"page_{page_idx+1:03d}_mask.png"
+            ),
+            mask
+        )
+
+        # ------------------------------------------
         # Preprocessing
         # ------------------------------------------
 
-        gray, binary = preprocessor.process(crop)
+        gray, binary = preprocessor.process(clean_crop)
 
         cv2.imwrite(
             str(preprocessed_dir / f"page_{page_idx + 1:03d}_gray.png"),

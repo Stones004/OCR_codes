@@ -10,3 +10,5 @@ denoised
 .env
 results
 data
+outputs_backup
+dataset

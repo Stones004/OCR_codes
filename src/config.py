@@ -36,3 +36,5 @@ class PipelineConfig:
     OCR_MAX_TOKENS: int = 64
 
     USE_OCR_PREPROCESSOR: bool = True
+
+    USE_ANNOTATION_REMOVAL: bool = True
