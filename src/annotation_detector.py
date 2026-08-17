@@ -13,14 +13,15 @@ class AnnotationDetector:
 
     def __init__(
         self,
-        min_width=6,
-        min_height=6,
-        padding=10,
-        merge_dist=25,
-        min_confident_area=800,
-        min_confident_dim=20,
-        min_ink_pixels=150,
-        min_fill_ratio=0.08,
+        min_width=8, #6
+        min_height=6, #6
+        padding=10, #10
+        merge_dist=25, #25
+        min_confident_area=350, #800
+        min_confident_dim=8, #10
+        min_ink_pixels=80, #150
+        min_fill_ratio=0.08, #0.08
+        row_y_tolerance=18, #18
     ):
 
         self.min_width = min_width
@@ -37,6 +38,7 @@ class AnnotationDetector:
         self.valley_threshold = 0.15      # 15% of max projection
         self.min_valley_width = 5         # Consecutive empty rows
         self.min_segment_height = 20      # Prevent tiny fragments
+        self.row_y_tolerance = row_y_tolerance
     
 
     def _horizontal_projection(self, roi):
@@ -188,14 +190,25 @@ class AnnotationDetector:
 
         h, w = binary.shape
 
+
+#        horiz_kernel = cv2.getStructuringElement(
+#            cv2.MORPH_RECT,
+#            (max(20, w // 15), 1)
+#        )
+
+#        vert_kernel = cv2.getStructuringElement(
+#            cv2.MORPH_RECT,
+#            (1, max(20, h // 15))
+#        ) 
+
         horiz_kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT,
-            (max(20, w // 15), 1)
+            (max(30, w // 4), 1)
         )
 
         vert_kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT,
-            (1, max(20, h // 15))
+            (1, max(30, h // 4))
         )
 
         horiz_lines = cv2.morphologyEx(
@@ -344,6 +357,99 @@ class AnnotationDetector:
 
     # --------------------------------------------------
 
+
+    def _group_boxes_by_y(self, boxes):
+        """
+        Group boxes that belong to the same horizontal writing row.
+
+        Each box is represented as:
+            (x1, y1, x2, y2)
+
+        Boxes are grouped using their vertical center.
+        """
+
+        rows = []
+
+        # Process from top to bottom
+        boxes = sorted(
+            boxes,
+            key=lambda b: (b[1] + b[3]) / 2
+        )
+
+        for box in boxes:
+
+            x1, y1, x2, y2 = box
+
+            cy = (y1 + y2) / 2
+
+            assigned = False
+
+            for row in rows:
+
+                # Current average Y position of this row
+                row_cy = row["center_y"]
+
+                if abs(cy - row_cy) <= self.row_y_tolerance:
+
+                    row["boxes"].append(box)
+
+                    # Recalculate row center
+                    centers = [
+                        (b[1] + b[3]) / 2
+                        for b in row["boxes"]
+                    ]
+
+                    row["center_y"] = float(
+                        np.mean(centers)
+                    )
+
+                    assigned = True
+                    break
+
+            if not assigned:
+
+                rows.append({
+                    "center_y": cy,
+                    "boxes": [box]
+                })
+
+        # ---------------------------------------------
+        # Convert each row into one bounding box
+        # ---------------------------------------------
+
+        row_boxes = []
+
+        for row in rows:
+
+            boxes_in_row = row["boxes"]
+
+            x1 = min(
+                b[0]
+                for b in boxes_in_row
+            )
+
+            y1 = min(
+                b[1]
+                for b in boxes_in_row
+            )
+
+            x2 = max(
+                b[2]
+                for b in boxes_in_row
+            )
+
+            y2 = max(
+                b[3]
+                for b in boxes_in_row
+            )
+
+            row_boxes.append(
+                (x1, y1, x2, y2)
+            )
+
+        return row_boxes
+
+
     def detect(
         self,
         gray,
@@ -394,20 +500,10 @@ class AnnotationDetector:
         confident = []
 
         for x1, y1, x2, y2 in merged:
-
             w = x2 - x1
             h = y2 - y1
 
             bbox_area = w * h
-
-            if bbox_area < self.min_confident_area:
-                continue
-
-            if w < self.min_confident_dim:
-                continue
-
-            if h < self.min_confident_dim:
-                continue
 
             ink_pixels = cv2.countNonZero(
                 binary[y1:y2, x1:x2]
@@ -415,11 +511,50 @@ class AnnotationDetector:
 
             fill_ratio = ink_pixels / float(bbox_area)
 
+            print(
+                f"\nCandidate:"
+                f" bbox={w}x{h}"
+                f" | bbox_area={bbox_area}"
+                f" | ink_pixels={ink_pixels}"
+                f" | fill_ratio={fill_ratio:.3f}"
+            )
+
+            if bbox_area < self.min_confident_area:
+                print(
+                    f"  REJECT → bbox_area "
+                    f"{bbox_area} < {self.min_confident_area}"
+                )
+                continue
+
+            if w < self.min_confident_dim:
+                print(
+                    f"  REJECT → width "
+                    f"{w} < {self.min_confident_dim}"
+                )
+                continue
+
+            if h < self.min_confident_dim:
+                print(
+                    f"  REJECT → height "
+                    f"{h} < {self.min_confident_dim}"
+                )
+                continue
+
             if ink_pixels < self.min_ink_pixels:
+                print(
+                    f"  REJECT → ink_pixels "
+                    f"{ink_pixels} < {self.min_ink_pixels}"
+                )
                 continue
 
             if fill_ratio < self.min_fill_ratio:
+                print(
+                    f"  REJECT → fill_ratio "
+                    f"{fill_ratio:.3f} < {self.min_fill_ratio}"
+                )
                 continue
+
+            print("  ACCEPT ✓")
 
             confident.append(
                 (
@@ -430,6 +565,25 @@ class AnnotationDetector:
                 )
             )
 
+            confident.append(
+                (
+                    x1,
+                    y1,
+                    x2,
+                    y2
+                )
+            )
+
+        # ==================================================
+        # GROUP CONFIDENT ROIs BY HORIZONTAL ROW
+        # ==================================================
+
+        grouped = self._group_boxes_by_y(confident)
+
+        # ==================================================
+        # FINAL ROI CREATION
+        # ==================================================
+
         detected = cv2.cvtColor(
             gray,
             cv2.COLOR_GRAY2BGR
@@ -437,7 +591,7 @@ class AnnotationDetector:
 
         rois = []
 
-        for x1, y1, x2, y2 in confident:
+        for x1, y1, x2, y2 in grouped:
 
             x1 = max(0, x1 - self.padding)
             y1 = max(0, y1 - self.padding)

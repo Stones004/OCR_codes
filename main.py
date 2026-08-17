@@ -82,12 +82,18 @@ print(f"\nFound {len(pdf_files)} PDF(s)\n")
 for pdf_path in pdf_files:
 
     pdf_name = pdf_path.stem
+    pdf_output = OUTPUT_DIR / pdf_name
+
+    # Skip processing if output directory for this PDF already exists
+    if pdf_output.exists():
+        print("=" * 70)
+        print(f"Skipping (Already Processed - Folder Exists): {pdf_name}")
+        print("=" * 70)
+        continue
 
     print("=" * 70)
     print(f"Processing : {pdf_name}")
     print("=" * 70)
-
-    pdf_output = OUTPUT_DIR / pdf_name
 
     deskew_dir = pdf_output / "deskewed"
     vertical_dir = pdf_output / "vertical"
