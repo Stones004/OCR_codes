@@ -30,8 +30,8 @@ config = PipelineConfig()
 # Paths
 # --------------------------------------------------
 
-#INPUT_DIR = Path("data/input_pdfs")
-INPUT_DIR = Path(r"G:\ICT_Scripts")
+INPUT_DIR = Path("data/input_pdfs")
+#INPUT_DIR = Path(r"G:\ICT_Scripts")
 OUTPUT_DIR = Path("outputs")
 
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -55,7 +55,7 @@ extractor = VerticalExtractor(
 line_detector = LineDetector()
 
 cropper = Cropper(
-    right_padding=15
+    right_padding=5
 )
 
 preprocessor = Preprocessor(

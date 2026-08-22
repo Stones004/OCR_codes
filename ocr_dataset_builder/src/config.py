@@ -16,7 +16,7 @@ DATASET_DIR = PROJECT_ROOT / "dataset"
 
 PREVIEW_FOLDER = DATASET_DIR / "preview"
 
-IMAGE_FOLDER = Path(r"G:\OCR_codes\outputs\all_roi_images")
+IMAGE_FOLDER = Path(r"G:\OCR_codes\outputs_17-08\all_roi_images")
 
 COMPLETED_FOLDER = DATASET_DIR / "completed"
 
