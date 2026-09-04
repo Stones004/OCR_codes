@@ -124,7 +124,7 @@ import numpy as np
 
 class Preprocessor:
 
-    def __init__(self, min_area=200):
+    def __init__(self, min_area=50):
 
         self.min_area = min_area
 

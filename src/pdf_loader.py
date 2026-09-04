@@ -24,10 +24,12 @@ class PDFLoader:
         dpi: int = 300,
         save_debug: bool = False,
         output_dir: str | None = None,
+        skip_pages: int = 2,
     ):
         self.dpi = dpi
         self.save_debug = save_debug
         self.output_dir = Path(output_dir) if output_dir else None
+        self.skip_pages = skip_pages
 
         if self.save_debug and self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -54,7 +56,7 @@ class PDFLoader:
         print(f"DPI  : {self.dpi}")
         print("=" * 60)
 
-        for page_number in range(len(document)):
+        for page_number in range(self.skip_pages, len(document)):
 
             page = document.load_page(page_number)
 
