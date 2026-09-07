@@ -9,7 +9,7 @@ from src.line_detector import LineDetector
 from src.cropper import Cropper
 from src.page_preprocessor import PagePreprocessor
 from src.ocr_preprocessor import OCRPreprocessor
-from src.annotation_detector import AnnotationDetector
+from src.annotation_detector import AnnotationDetectorMSER
 from src.roi_text_extractor import ROITextExtractor
 import cv2
 import pandas as pd
@@ -317,7 +317,10 @@ class OCRPipeline:
 
             print("Mode : ROI OCR")
 
-            rois, debug = self.annotation_detector.detect(gray, binary)
+            #rois, debug = self.annotation_detector.detect(gray, binary)
+
+            border_x = int(separator["x"] * self.ocr_preprocessor.scale)
+            rois, debug = self.annotation_detector.detect(gray, binary, border_x=border_x)
 
             if self.config.SAVE_ROIS:
 

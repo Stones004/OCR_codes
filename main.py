@@ -42,7 +42,12 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 loader = PDFLoader(
     dpi=300,
-    save_debug=False
+    save_debug=False,
+    # This session's page numbering (and all the page-specific bug
+    # traces done against it) assumes every PDF page is loaded, so
+    # keep the default skip_pages=2 (added for a different machine's
+    # dataset) from silently shifting every output page_NNN label by 2.
+    skip_pages=0
 )
 
 deskewer = Deskewer()
