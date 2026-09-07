@@ -124,9 +124,21 @@ import numpy as np
 
 class Preprocessor:
 
-    def __init__(self, min_area=200):
+    def __init__(self, min_area=20, min_contrast_gap=30):
 
         self.min_area = min_area
+
+        # On a page with no real ink, grayscale values form one tight
+        # cluster of paper/scan noise. Otsu still forces some split
+        # even on that unimodal data, and it can degenerately land
+        # within a few gray levels of the background mean -- flooding
+        # the binary with background noise instead of real content
+        # (seen on a visually blank margin where the threshold landed
+        # 1.4 levels below the mean and marked 37% of the page as
+        # "ink"). Real ink is always separated from the paper
+        # background by a wide margin, so require the chosen threshold
+        # to sit well below the mean before trusting it.
+        self.min_contrast_gap = min_contrast_gap
 
     # --------------------------------------------------
 
@@ -140,12 +152,15 @@ class Preprocessor:
         else:
             gray = image.copy()
 
-        _, binary = cv2.threshold(
+        otsu_t, binary = cv2.threshold(
             gray,
             0,
             255,
             cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
         )
+
+        if gray.mean() - otsu_t < self.min_contrast_gap:
+            binary = np.zeros_like(gray)
 
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
             binary,

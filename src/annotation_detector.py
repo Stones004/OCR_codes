@@ -13,15 +13,25 @@ class AnnotationDetector:
 
     def __init__(
         self,
-        min_width=8, #6
-        min_height=6, #6
+        min_width=4, #8
+        min_height=3, #6
         padding=10, #10
-        merge_dist=25, #25
-        min_confident_area=350, #800
-        min_confident_dim=8, #10
-        min_ink_pixels=80, #150
-        min_fill_ratio=0.08, #0.08
+        merge_dist=16, #25
+        min_confident_area=70, #350
+        min_confident_dim=4, #8
+        min_ink_pixels=15, #80
+        min_fill_ratio=0.03, #0.08
         row_y_tolerance=18, #18
+        reject_above_top_line=True,
+        top_line_search_frac=0.2,
+        top_line_min_len_ratio=0.6,
+        top_line_margin=5,
+        exclude_sparse_strokes=True,
+        sparse_stroke_density_max=0.12,
+        sparse_stroke_min_dim=80,
+        exclude_long_vertical_strips=True,
+        long_strip_max_width=30,
+        long_strip_min_height=100,
     ):
 
         self.min_width = min_width
@@ -33,6 +43,32 @@ class AnnotationDetector:
         self.min_confident_dim = min_confident_dim
         self.min_ink_pixels = min_ink_pixels
         self.min_fill_ratio = min_fill_ratio
+
+        # Fixed printed horizontal line (e.g. a table header rule) near
+        # the top of the crop. Anything entirely above it is header/table
+        # bleed-through, not a handwritten annotation, so it is rejected.
+        self.reject_above_top_line = reject_above_top_line
+        self.top_line_search_frac = top_line_search_frac
+        self.top_line_min_len_ratio = top_line_min_len_ratio
+        self.top_line_margin = top_line_margin
+
+        # Sparse, elongated strokes (hand-drawn arrows/pointers/connector
+        # lines) have a low ink-density-per-bbox-area even though their
+        # bbox isn't necessarily extreme aspect ratio. Left in the merge
+        # step, their huge sparse bbox drags any real digit merged with
+        # them below min_fill_ratio, rejecting both together. Dropping
+        # them before merging keeps real digits isolated and intact.
+        self.exclude_sparse_strokes = exclude_sparse_strokes
+        self.sparse_stroke_density_max = sparse_stroke_density_max
+        self.sparse_stroke_min_dim = sparse_stroke_min_dim
+
+        # Long, narrow vertical strips (page-edge shadows, ruled-line
+        # remnants) are noise regardless of how dense they are -- a solid
+        # thin line passes the sparse-stroke density check just fine, so
+        # it needs its own plain width/height rule.
+        self.exclude_long_vertical_strips = exclude_long_vertical_strips
+        self.long_strip_max_width = long_strip_max_width
+        self.long_strip_min_height = long_strip_min_height
 
         self.refine_height = 140          # Only refine tall ROIs
         self.valley_threshold = 0.15      # 15% of max projection
@@ -183,6 +219,43 @@ class AnnotationDetector:
                 refined.extend(pieces)
 
         return refined
+
+    # --------------------------------------------------
+
+    def _find_top_line_y(self, binary):
+        """
+        Locate the fixed printed horizontal rule near the top of the
+        crop (e.g. a table header separator) and return the y-coordinate
+        of its bottom edge, or None if no such line is found.
+
+        Must run on the ORIGINAL binary, before remove_lines() strips
+        horizontal lines out of it.
+        """
+
+        h, w = binary.shape
+
+        horiz_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (max(30, w // 4), 1)
+        )
+
+        horiz_lines = cv2.morphologyEx(
+            binary,
+            cv2.MORPH_OPEN,
+            horiz_kernel
+        )
+
+        search_rows = max(1, int(h * self.top_line_search_frac))
+        row_ink = np.count_nonzero(horiz_lines[:search_rows], axis=1)
+
+        min_len = self.top_line_min_len_ratio * w
+        candidate_rows = np.where(row_ink >= min_len)[0]
+
+        if len(candidate_rows) == 0:
+            return None
+
+        # Bottom-most row of the topmost matching band = its bottom edge
+        return int(candidate_rows.max())
 
     # --------------------------------------------------
 
@@ -456,6 +529,11 @@ class AnnotationDetector:
         binary
     ):
 
+        # Locate the fixed top header line before it gets stripped out
+        top_line_y = None
+        if self.reject_above_top_line:
+            top_line_y = self._find_top_line_y(binary)
+
         # Remove printed table lines only
         binary = self.remove_lines(binary)
 
@@ -473,11 +551,23 @@ class AnnotationDetector:
             y = stats[i, cv2.CC_STAT_TOP]
             w = stats[i, cv2.CC_STAT_WIDTH]
             h = stats[i, cv2.CC_STAT_HEIGHT]
+            area = stats[i, cv2.CC_STAT_AREA]
 
             if w < self.min_width:
                 continue
 
             if h < self.min_height:
+                continue
+
+            if top_line_y is not None and (y + h) <= top_line_y + self.top_line_margin:
+                continue
+
+            if self.exclude_sparse_strokes and max(w, h) > self.sparse_stroke_min_dim:
+                density = area / float(w * h)
+                if density < self.sparse_stroke_density_max:
+                    continue
+
+            if self.exclude_long_vertical_strips and w < self.long_strip_max_width and h > self.long_strip_min_height:
                 continue
 
             boxes.append(
@@ -521,40 +611,40 @@ class AnnotationDetector:
 
             if bbox_area < self.min_confident_area:
                 print(
-                    f"  REJECT → bbox_area "
+                    f"  REJECT -> bbox_area "
                     f"{bbox_area} < {self.min_confident_area}"
                 )
                 continue
 
             if w < self.min_confident_dim:
                 print(
-                    f"  REJECT → width "
+                    f"  REJECT -> width "
                     f"{w} < {self.min_confident_dim}"
                 )
                 continue
 
             if h < self.min_confident_dim:
                 print(
-                    f"  REJECT → height "
+                    f"  REJECT -> height "
                     f"{h} < {self.min_confident_dim}"
                 )
                 continue
 
             if ink_pixels < self.min_ink_pixels:
                 print(
-                    f"  REJECT → ink_pixels "
+                    f"  REJECT -> ink_pixels "
                     f"{ink_pixels} < {self.min_ink_pixels}"
                 )
                 continue
 
             if fill_ratio < self.min_fill_ratio:
                 print(
-                    f"  REJECT → fill_ratio "
+                    f"  REJECT -> fill_ratio "
                     f"{fill_ratio:.3f} < {self.min_fill_ratio}"
                 )
                 continue
 
-            print("  ACCEPT ✓")
+            print("  ACCEPT")
 
             confident.append(
                 (

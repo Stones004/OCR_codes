@@ -86,7 +86,7 @@ loader = PDFLoader(
 )
 
 pages = loader.load_pdf(
-    "data/input_pdfs/P5.pdf"
+    "data/input_pdfs/Doc0555.pdf"
 )
 
 extractor = VerticalExtractor(
@@ -98,7 +98,7 @@ deskewer = Deskewer()
 
 detector = LineDetector()
 
-output_dir = Path("outputs")
+output_dir = Path("vertical_tests")
 output_dir.mkdir(exist_ok=True)
 
 results = []

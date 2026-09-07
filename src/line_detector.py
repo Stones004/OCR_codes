@@ -14,8 +14,8 @@ class LineDetector:
 
     def __init__(
         self,
-        left_ratio=0.05,
-        right_ratio=0.50,
+        left_ratio=0.03,
+        right_ratio=0.30,
         expected_x=None,
         tolerance=None
     ):

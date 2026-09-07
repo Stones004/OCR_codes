@@ -90,6 +90,15 @@ class Deskewer:
                 best_score = score
                 best_angle = angle
 
+        # If the coarse search's best angle sits at the very edge of the
+        # search range, the projection-variance metric is diverging
+        # toward the boundary rather than converging on a real skew (seen
+        # on near-blank pages and pages with a dominant watermark
+        # competing with the true ruled lines). Trust zero skew instead
+        # of chasing that runaway result with a fine search.
+        if best_angle in (self.angle_range[0], self.angle_range[1]):
+            return 0
+
         # ------------------------
         # Fine Search
         # ------------------------
