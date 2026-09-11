@@ -105,4 +105,10 @@ class MistralOCR:
 
         result = self.run_ocr(signed_url)
 
-        return self.extract_text(result)
+        # No per-character confidence available from the hosted API --
+        # Mistral is treated as an already-trusted teacher, not something
+        # that needs a confidence-gated review pass.
+        return self.extract_text(result), None
+
+    def close(self):
+        pass

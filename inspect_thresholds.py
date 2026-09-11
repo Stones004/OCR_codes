@@ -7,6 +7,10 @@ connected component alongside the pipeline threshold it was checked
 against - so you can see exactly which marks get kept and which get
 dropped, and why.
 
+Reads every threshold live from the actual Preprocessor/AnnotationDetector
+instances, so it always reflects whatever is currently configured in
+src/preprocessor.py and src/annotation_detector.py.
+
 Also renders a debug image per page into threshold_debug/<pdf_name>/
 with every candidate annotation box drawn: green for accepted (would
 trigger an OCR call), red for rejected, labeled with which threshold(s)

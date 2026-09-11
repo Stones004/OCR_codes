@@ -30,8 +30,8 @@ config = PipelineConfig()
 # Paths
 # --------------------------------------------------
 
-INPUT_DIR = Path("data/input_pdfs")
-#INPUT_DIR = Path(r"G:\ICT_Scripts")
+#INPUT_DIR = Path("data/input_pdfs")
+INPUT_DIR = Path(r"G:\ICT_Scripts")
 OUTPUT_DIR = Path("outputs")
 
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -43,11 +43,12 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 loader = PDFLoader(
     dpi=300,
     save_debug=False,
-    # This session's page numbering (and all the page-specific bug
-    # traces done against it) assumes every PDF page is loaded, so
-    # keep the default skip_pages=2 (added for a different machine's
-    # dataset) from silently shifting every output page_NNN label by 2.
-    skip_pages=0
+    # Every document in this dataset opens with a 2-page cover: a
+    # marks-grid facing sheet (no left-margin/answer-column split, so
+    # separator detection always fails on it) followed by its blank
+    # flip side. Skip both so page_NNN output labels start at the
+    # first page that actually has annotation-margin content.
+    skip_pages=2
 )
 
 deskewer = Deskewer()
