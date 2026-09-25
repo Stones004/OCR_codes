@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from src.config import DeskewConfig
+
 
 """
 Deskewer
@@ -12,16 +14,15 @@ alignment for downstream processing.
 
 class Deskewer:
 
-    def __init__(
-        self,
-        angle_range=(-5.0, 5.0),
-        coarse_step=0.5,
-        fine_step=0.05
-    ):
+    def __init__(self, config: DeskewConfig):
 
-        self.angle_range = angle_range
-        self.coarse_step = coarse_step
-        self.fine_step = fine_step
+        self.angle_min = config.angle_min
+        self.angle_max = config.angle_max
+        self.coarse_step = config.coarse_step
+        self.fine_step = config.fine_step
+        self.fine_window = config.fine_window
+        self.border_value = config.border_value
+        self.edge_fallback_angle = config.edge_fallback_angle
 
     # --------------------------------------------------
     # Horizontal Projection Score
@@ -38,8 +39,7 @@ class Deskewer:
     # Rotate image
     # --------------------------------------------------
 
-    @staticmethod
-    def rotate(image, angle):
+    def rotate(self, image, angle):
 
         h, w = image.shape[:2]
 
@@ -57,7 +57,7 @@ class Deskewer:
             (w, h),
             flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
-            borderValue=255
+            borderValue=self.border_value
         )
 
         return rotated
@@ -76,8 +76,8 @@ class Deskewer:
         # ------------------------
 
         for angle in np.arange(
-            self.angle_range[0],
-            self.angle_range[1] + self.coarse_step,
+            self.angle_min,
+            self.angle_max + self.coarse_step,
             self.coarse_step
         ):
 
@@ -94,17 +94,17 @@ class Deskewer:
         # search range, the projection-variance metric is diverging
         # toward the boundary rather than converging on a real skew (seen
         # on near-blank pages and pages with a dominant watermark
-        # competing with the true ruled lines). Trust zero skew instead
-        # of chasing that runaway result with a fine search.
-        if best_angle in (self.angle_range[0], self.angle_range[1]):
-            return 0
+        # competing with the true ruled lines). Trust the fallback angle
+        # instead of chasing that runaway result with a fine search.
+        if best_angle in (self.angle_min, self.angle_max):
+            return self.edge_fallback_angle
 
         # ------------------------
         # Fine Search
         # ------------------------
 
-        fine_start = best_angle - 0.5
-        fine_end = best_angle + 0.5
+        fine_start = best_angle - self.fine_window
+        fine_end = best_angle + self.fine_window
 
         best_score = -1
 

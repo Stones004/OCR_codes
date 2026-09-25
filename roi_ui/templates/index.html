@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ROI OCR Watcher</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f25;
+    --panel-2: #22262e;
+    --border: #2b2f38;
+    --text: #e8e9eb;
+    --muted: #9aa0ab;
+    --accent: #4f8cff;
+    --good: #46c864;
+    --warn: #e6aa28;
+    --bad: #dc5050;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 14px 24px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  header h1 {
+    font-size: 18px;
+    margin: 0 0 8px 0;
+    font-weight: 600;
+  }
+  .status-line {
+    font-size: 13px;
+    color: var(--muted);
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .status-line b { color: var(--text); }
+  .dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-right: 6px;
+    background: var(--warn);
+  }
+  .dot.ready { background: var(--good); }
+  .dot.error { background: var(--bad); }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar input[type="text"],
+  .toolbar select {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .toolbar input[type="text"] {
+    width: 220px;
+  }
+  .btn {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.active { border-color: var(--accent); color: var(--accent); }
+  .spacer { flex: 1; }
+
+  .stats {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+  .stats b { color: var(--text); }
+  .stats .needs { color: var(--warn); }
+  .stats .needs b { color: var(--warn); }
+
+  main { padding: 24px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 18px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    position: relative;
+    transition: border-color 0.15s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card img {
+    width: 100%;
+    display: block;
+    background: #0d0e11;
+  }
+  .card .meta {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .card .corrected {
+    padding: 0 12px 10px 12px;
+    font-size: 12px;
+    color: var(--good);
+  }
+  .flags {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    gap: 6px;
+  }
+  .flag {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 3px 7px;
+    border-radius: 999px;
+    backdrop-filter: blur(2px);
+  }
+  .flag.review { background: rgba(230,170,40,0.9); color: #1a1a1a; }
+  .flag.reviewed { background: rgba(70,200,100,0.9); color: #10331a; }
+
+  .badge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .badge.good { background: rgba(70,200,100,0.15); color: var(--good); }
+  .badge.warn { background: rgba(230,170,40,0.15); color: var(--warn); }
+  .badge.bad { background: rgba(220,80,80,0.15); color: var(--bad); }
+
+  .empty {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 40px;
+    text-align: center;
+  }
+
+  /* Modal */
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 24px;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-width: 560px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .modal img {
+    width: 100%;
+    border-radius: 8px;
+    background: #0d0e11;
+    margin-bottom: 14px;
+  }
+  .modal .row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .modal label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin: 14px 0 6px 0;
+  }
+  .modal textarea {
+    width: 100%;
+    min-height: 64px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+  }
+  .modal .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .modal .actions .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ROI OCR Watcher</h1>
+  <div class="status-line" id="status-line">
+    <span><span class="dot" id="backend-dot"></span><span id="backend-text">connecting...</span></span>
+    <span>input: <b id="input-dir">-</b></span>
+    <span>output: <b id="output-dir">-</b></span>
+    <div class="stats" id="stats">
+      <span>processed: <b id="stat-total">0</b></span>
+      <span class="needs">needs review: <b id="stat-needs-review">0</b></span>
+      <span>avg confidence: <b id="stat-avg-conf">-</b></span>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="search" placeholder="Search filename...">
+    <select id="filter">
+      <option value="all">All results</option>
+      <option value="needs_review">Needs review</option>
+      <option value="reviewed">Reviewed</option>
+      <option value="errors">Errors only</option>
+    </select>
+    <select id="sort">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="conf_asc">Lowest confidence first</option>
+      <option value="conf_desc">Highest confidence first</option>
+    </select>
+    <div class="spacer"></div>
+    <button class="btn" id="pause-btn">Pause</button>
+    <button class="btn" id="clear-btn">Clear view</button>
+  </div>
+</header>
+
+<main>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty-msg" style="display:none;">
+    No ROI images match the current filter.
+  </div>
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <img id="modal-img" alt="">
+    <div class="row"><span id="modal-filename"></span><span id="modal-time"></span></div>
+    <div class="row"><span id="modal-conf"></span></div>
+    <label for="modal-text">Corrected text (leave as-is to confirm the prediction)</label>
+    <textarea id="modal-text"></textarea>
+    <div class="actions">
+      <button class="btn" id="modal-cancel">Cancel</button>
+      <button class="btn primary" id="modal-save">Save correction</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tunables injected from config.yaml (roi_ui section)
+const UI = {{ ui_settings | tojson }};
+
+let allResults = [];
+let clearedBefore = null;
+let paused = false;
+let modalOpen = false;
+let activeEntry = null;
+let lastRenderKey = "";
+
+function badgeClass(confidence) {
+  if (confidence >= UI.confidence_high) return 'good';
+  if (confidence >= UI.confidence_mid) return 'warn';
+  return 'bad';
+}
+
+async function pollStatus() {
+  if (paused || modalOpen) return;
+  try {
+    const res = await fetch('/api/status');
+    const s = await res.json();
+    document.getElementById('input-dir').textContent = s.input_dir || '-';
+    document.getElementById('output-dir').textContent = s.output_dir || '-';
+
+    const dot = document.getElementById('backend-dot');
+    const text = document.getElementById('backend-text');
+
+    if (s.backend_error) {
+      dot.className = 'dot error';
+      text.textContent = 'backend failed: ' + s.backend_error;
+    } else if (s.backend_ready) {
+      dot.className = 'dot ready';
+      text.textContent = s.backend + ' backend ready';
+    } else {
+      dot.className = 'dot';
+      text.textContent = 'loading ' + s.backend + ' backend...';
+    }
+  } catch (e) {
+    // server not reachable yet, ignore
+  }
+}
+
+function computeStats(items) {
+  const total = items.length;
+  const needsReview = items.filter(i => i.needs_review && !i.reviewed).length;
+  const ok = items.filter(i => !i.error);
+  const avg = ok.length ? ok.reduce((a, i) => a + i.confidence, 0) / ok.length : null;
+
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-needs-review').textContent = needsReview;
+  document.getElementById('stat-avg-conf').textContent = avg === null ? '-' : avg.toFixed(2);
+}
+
+function applyFiltersAndSort(items) {
+  const search = document.getElementById('search').value.trim().toLowerCase();
+  const filter = document.getElementById('filter').value;
+  const sort = document.getElementById('sort').value;
+
+  let filtered = items.filter(i => {
+    if (clearedBefore && i.processed_at <= clearedBefore) return false;
+    if (search && !i.filename.toLowerCase().includes(search)) return false;
+    if (filter === 'needs_review' && !(i.needs_review && !i.reviewed)) return false;
+    if (filter === 'reviewed' && !i.reviewed) return false;
+    if (filter === 'errors' && !i.error) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (sort === 'oldest') return a.processed_at.localeCompare(b.processed_at);
+    if (sort === 'conf_asc') return a.confidence - b.confidence;
+    if (sort === 'conf_desc') return b.confidence - a.confidence;
+    return b.processed_at.localeCompare(a.processed_at); // newest
+  });
+
+  return filtered;
+}
+
+function renderCard(item) {
+  const imgSrc = item.output_filename
+    ? '/output/' + encodeURIComponent(item.output_filename) + '?t=' + Date.parse(item.processed_at)
+    : '/input/' + encodeURIComponent(item.filename);
+
+  const badge = item.error
+    ? '<span class="badge bad">error</span>'
+    : `<span class="badge ${badgeClass(item.confidence)}">${item.confidence.toFixed(2)}</span>`;
+
+  const time = new Date(item.processed_at).toLocaleTimeString();
+
+  let flags = '';
+  if (item.reviewed) {
+    flags += '<span class="flag reviewed">reviewed</span>';
+  } else if (item.needs_review) {
+    flags += '<span class="flag review">review</span>';
+  }
+
+  const corrected = item.reviewed && item.corrected_text
+    ? `<div class="corrected">&#10003; ${escapeHtml(item.corrected_text)}</div>`
+    : '';
+
+  return `
+    <div class="card" data-id="${item.id}">
+      <div class="flags">${flags}</div>
+      <img src="${imgSrc}" loading="lazy" alt="${escapeHtml(item.filename)}">
+      <div class="meta">
+        <span>${escapeHtml(item.filename)} &middot; ${time}</span>
+        ${badge}
+      </div>
+      ${corrected}
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function renderGrid() {
+  const visible = applyFiltersAndSort(allResults);
+  computeStats(allResults);
+
+  const key = JSON.stringify(visible.map(i => [i.id, i.reviewed, i.corrected_text, i.output_filename]));
+  if (key === lastRenderKey) return;
+  lastRenderKey = key;
+
+  const grid = document.getElementById('grid');
+  const emptyMsg = document.getElementById('empty-msg');
+
+  emptyMsg.style.display = visible.length === 0 ? 'block' : 'none';
+  grid.innerHTML = visible.map(renderCard).join('');
+
+  grid.querySelectorAll('.card').forEach(card => {
+    card.addEventListener('click', () => openModal(parseInt(card.dataset.id, 10)));
+  });
+}
+
+async function pollResults() {
+  if (paused || modalOpen) return;
+  try {
+    const res = await fetch('/api/results');
+    allResults = await res.json();
+    renderGrid();
+  } catch (e) {
+    // server not reachable yet, ignore
+  }
+}
+
+function openModal(id) {
+  const item = allResults.find(i => i.id === id);
+  if (!item) return;
+
+  activeEntry = item;
+  modalOpen = true;
+
+  const imgSrc = item.output_filename
+    ? '/output/' + encodeURIComponent(item.output_filename)
+    : '/input/' + encodeURIComponent(item.filename);
+
+  document.getElementById('modal-img').src = imgSrc;
+  document.getElementById('modal-filename').textContent = item.filename;
+  document.getElementById('modal-time').textContent = new Date(item.processed_at).toLocaleString();
+  document.getElementById('modal-conf').textContent = item.error
+    ? 'OCR failed: ' + item.error
+    : `predicted: "${item.prediction}"  (confidence ${item.confidence.toFixed(2)})`;
+  document.getElementById('modal-text').value = item.reviewed ? item.corrected_text : item.prediction;
+
+  document.getElementById('overlay').classList.add('open');
+}
+
+function closeModal() {
+  modalOpen = false;
+  activeEntry = null;
+  document.getElementById('overlay').classList.remove('open');
+}
+
+async function saveCorrection() {
+  if (!activeEntry) return;
+
+  const correctedText = document.getElementById('modal-text').value;
+
+  try {
+    const res = await fetch('/api/correct', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: activeEntry.id, corrected_text: correctedText }),
+    });
+    const updated = await res.json();
+
+    const idx = allResults.findIndex(i => i.id === updated.id);
+    if (idx !== -1) allResults[idx] = updated;
+
+    lastRenderKey = "";
+    closeModal();
+    renderGrid();
+  } catch (e) {
+    alert('Failed to save correction: ' + e);
+  }
+}
+
+document.getElementById('search').addEventListener('input', () => { lastRenderKey = ""; renderGrid(); });
+document.getElementById('filter').addEventListener('change', () => { lastRenderKey = ""; renderGrid(); });
+document.getElementById('sort').addEventListener('change', () => { lastRenderKey = ""; renderGrid(); });
+
+document.getElementById('pause-btn').addEventListener('click', () => {
+  paused = !paused;
+  const btn = document.getElementById('pause-btn');
+  btn.textContent = paused ? 'Resume' : 'Pause';
+  btn.classList.toggle('active', paused);
+});
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+  clearedBefore = new Date().toISOString();
+  lastRenderKey = "";
+  renderGrid();
+});
+
+document.getElementById('modal-cancel').addEventListener('click', closeModal);
+document.getElementById('modal-save').addEventListener('click', saveCorrection);
+document.getElementById('overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'overlay') closeModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && modalOpen) closeModal();
+});
+
+pollStatus();
+pollResults();
+setInterval(pollStatus, UI.status_poll_ms);
+setInterval(pollResults, UI.results_poll_ms);
+</script>
+
+</body>
+</html>

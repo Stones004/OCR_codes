@@ -20,14 +20,21 @@ from strhub.models.utils import load_from_checkpoint
 
 checkpoint_path = sys.argv[1]
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# argv[2]: JSON settings passed by the parent from config.yaml --
+# {"device": "auto|cpu|cuda", "norm_mean": float, "norm_std": float}
+settings = json.loads(sys.argv[2])
+
+if settings["device"] == "auto":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+else:
+    device = torch.device(settings["device"])
 
 model = load_from_checkpoint(checkpoint_path).eval().to(device)
 
 img_transform = T.Compose([
     T.Resize(model.hparams.img_size, T.InterpolationMode.BICUBIC),
     T.ToTensor(),
-    T.Normalize(0.5, 0.5),
+    T.Normalize(settings["norm_mean"], settings["norm_std"]),
 ])
 
 print("READY", flush=True)

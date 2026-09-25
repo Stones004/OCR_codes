@@ -1,25 +1,40 @@
-from pathlib import Path
+import argparse
 import shutil
 
-# Root directory containing Doc**** folders
-ROOT_DIR = Path("outputs")
+from src.config import load_config
+
+parser = argparse.ArgumentParser(
+    description="Collect every <pdf>/roi image into one folder"
+)
+parser.add_argument(
+    "--config",
+    default=None,
+    help="Path to a config YAML (default: $OCR_CONFIG, else <repo>/config.yaml)",
+)
+args = parser.parse_args()
+
+cfg = load_config(args.config)
+settings = cfg.roi_consolidator
+
+# Root directory containing the per-PDF output folders
+ROOT_DIR = settings.root_dir
 
 # Destination folder
-DEST_DIR = ROOT_DIR / "all_roi_images"
-DEST_DIR.mkdir(exist_ok=True)
+DEST_DIR = settings.dest_dir
+DEST_DIR.mkdir(parents=True, exist_ok=True)
 
 # Supported image extensions
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTS = set(cfg.image_extensions)
 
 count = 0
 
-# Iterate through every Doc**** folder
-for doc_folder in sorted(ROOT_DIR.glob("Doc*")):
+# Iterate through every per-PDF folder
+for doc_folder in sorted(ROOT_DIR.glob(settings.doc_glob)):
 
     if not doc_folder.is_dir():
         continue
 
-    roi_folder = doc_folder / "roi"
+    roi_folder = doc_folder / cfg.layout.roi_dir
 
     if not roi_folder.exists():
         continue
@@ -40,5 +55,5 @@ for doc_folder in sorted(ROOT_DIR.glob("Doc*")):
 
         count += 1
 
-print(f"\nCopied {count} ROI images to:")
+print("\nCopied " + str(count) + " ROI images to:")
 print(DEST_DIR)

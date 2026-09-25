@@ -38,7 +38,7 @@ from src.cropper import Cropper
 from src.annotation_remover import AnnotationRemover
 from src.preprocessor import Preprocessor
 from src.annotation_detector import AnnotationDetector
-from src.config import PipelineConfig
+from src.config import load_config
 
 
 def raw_components(binary):
@@ -57,9 +57,10 @@ REASON_CODES = {
 }
 
 
-def save_debug_image(gray, candidates, out_path):
+def save_debug_image(gray, candidates, out_path, style):
     """
     candidates: list of {"bbox": (x1,y1,x2,y2), "accepted": bool, "reasons": [str]}
+    style: the inspect_thresholds section of config.yaml
     """
 
     vis = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
@@ -68,17 +69,18 @@ def save_debug_image(gray, candidates, out_path):
         x1, y1, x2, y2 = item["bbox"]
 
         if item["accepted"]:
-            color = (0, 200, 0)
+            color = tuple(style.accepted_color)
             label = "OK"
         else:
-            color = (0, 0, 255)
+            color = tuple(style.rejected_color)
             label = "/".join(item["reasons"])
 
-        cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
+        cv2.rectangle(vis, (x1, y1), (x2, y2), color, style.box_thickness)
 
         cv2.putText(
-            vis, label, (x1, max(10, y1 - 5)),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA
+            vis, label, (x1, max(style.label_min_y, y1 - style.label_offset)),
+            cv2.FONT_HERSHEY_SIMPLEX, style.font_scale, color,
+            style.font_thickness, cv2.LINE_AA
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +98,7 @@ def inspect_page(
     annotation_remover,
     preprocessor,
     annotation_detector,
-    config,
+    cfg,
     debug_dir=None,
 ):
     rows = []
@@ -111,7 +113,7 @@ def inspect_page(
 
     crop = cropper.crop(corrected, separator)
 
-    if config.USE_ANNOTATION_REMOVAL:
+    if cfg.pipeline.use_annotation_removal:
         clean_crop, _ = annotation_remover.process_debug(crop)
     else:
         clean_crop = crop
@@ -149,7 +151,7 @@ def inspect_page(
             "passed": bool(area >= preprocessor.min_area),
         })
 
-    if not config.USE_ANNOTATION_DETECTION:
+    if not cfg.pipeline.use_annotation_detection:
         return rows
 
     # ------------------------------------------------------------
@@ -253,7 +255,8 @@ def inspect_page(
     if debug_dir is not None:
         save_debug_image(
             gray, debug_candidates,
-            debug_dir / f"page_{page_idx + 1:03d}.png",
+            debug_dir / cfg.layout.page_image.format(page=page_idx + 1),
+            cfg.inspect_thresholds,
         )
 
     return rows
@@ -272,14 +275,19 @@ def main():
              "(matches the page_NNN numbering in outputs/, default: all)",
     )
     parser.add_argument(
-        "--out", default="threshold_report.csv", help="Output CSV path"
+        "--config", default=None,
+        help="Path to a config YAML (default: $OCR_CONFIG, else <repo>/config.yaml)",
+    )
+    parser.add_argument(
+        "--out", default=None,
+        help="Output CSV path (default: inspect_thresholds.report_csv)",
     )
     parser.add_argument(
         "--debug-dir",
         default=None,
         help="Base folder for accept/reject debug images; each PDF gets "
              "its own <debug-dir>/<pdf_name>/ subfolder "
-             "(default: ./threshold_debug, at the repo root)",
+             "(default: inspect_thresholds.debug_dir)",
     )
     parser.add_argument(
         "--no-images", action="store_true",
@@ -287,21 +295,26 @@ def main():
     )
     args = parser.parse_args()
 
-    config = PipelineConfig()
+    cfg = load_config(args.config)
+    verbose = cfg.pipeline.verbose
 
-    loader = PDFLoader(dpi=300, save_debug=False)
-    deskewer = Deskewer()
-    extractor = VerticalExtractor(threshold=180, kernel_height=None)
-    line_detector = LineDetector()
-    cropper = Cropper(right_padding=5)
-    annotation_remover = AnnotationRemover()
-    preprocessor = Preprocessor()
-    annotation_detector = AnnotationDetector()
+    loader = PDFLoader(cfg.pdf)
+    deskewer = Deskewer(cfg.deskew)
+    extractor = VerticalExtractor(cfg.vertical, verbose=verbose)
+    line_detector = LineDetector(cfg.separator, cfg.visualization, verbose=verbose)
+    cropper = Cropper(cfg.crop)
+    annotation_remover = AnnotationRemover(cfg.ink_removal)
+    preprocessor = Preprocessor(cfg.preprocess)
+    annotation_detector = AnnotationDetector(
+        cfg.annotation_detector, cfg.visualization, verbose=verbose
+    )
+
+    out_csv = Path(args.out) if args.out else cfg.inspect_thresholds.report_csv
 
     pdf_arg = Path(args.pdf)
 
     if pdf_arg.is_dir():
-        pdf_paths = sorted(pdf_arg.glob("*.pdf"))
+        pdf_paths = sorted(pdf_arg.glob(cfg.paths.pdf_glob))
         if not pdf_paths:
             raise SystemExit(f"No PDFs found in {pdf_arg}")
     else:
@@ -312,7 +325,8 @@ def main():
         wanted = {int(p) for p in args.pages.split(",")}
 
     debug_base = None if args.no_images else (
-        Path(args.debug_dir) if args.debug_dir else Path("threshold_debug")
+        Path(args.debug_dir) if args.debug_dir
+        else cfg.inspect_thresholds.debug_dir
     )
 
     all_rows = []
@@ -337,7 +351,7 @@ def main():
             rows = inspect_page(
                 pdf_name, page_idx, page, deskewer, extractor, line_detector,
                 cropper, annotation_remover, preprocessor, annotation_detector,
-                config, debug_dir=debug_dir,
+                cfg, debug_dir=debug_dir,
             )
 
             all_rows.extend(rows)
@@ -346,9 +360,9 @@ def main():
             print(f"Debug images written to {debug_dir}")
 
     df = pd.DataFrame(all_rows)
-    df.to_csv(args.out, index=False)
+    df.to_csv(out_csv, index=False)
 
-    print(f"\nWrote {len(df)} threshold checks to {args.out}")
+    print(f"\nWrote {len(df)} threshold checks to {out_csv}")
 
     if len(df):
         fail_summary = (

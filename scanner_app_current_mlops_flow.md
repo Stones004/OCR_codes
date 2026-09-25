@@ -73,7 +73,7 @@ At the current stage, the two repositories should **remain separate**. The futur
                                         │
                                         ▼
                               OCR Inference Layer
-                              (TrOCR / PARSeq / ...)
+                              (PARSeq / ...)
                                         │
                                         ▼
                               Post-processing
@@ -169,7 +169,6 @@ ROI Extraction
    ▼
 OCR Inference
    │
-   ├── TrOCR
    ├── PARSeq
    └── Future OCR models
    │

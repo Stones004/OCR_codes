@@ -1,0 +1,387 @@
+# ======================================================================
+# OCR pipeline configuration  --  the single source of truth
+#
+# Every tunable in the project is set here. The code has no defaults:
+# a missing key is a startup error (see src/config.py for the schema).
+#
+#   * Relative paths resolve against THIS file's folder, not the CWD.
+#   * Use another file per run:  python main.py --config runs/strict.yaml
+#     (or set the OCR_CONFIG environment variable).
+#   * Colours are BGR (OpenCV order) unless noted.
+#   * Not configurable on purpose: algorithm identity (Otsu, connected
+#     components, 8-connectivity), fixed file formats/schemas (CSV column
+#     names, "SUCCESS"/"FAILED"), the PDF unit constant (72 pt/inch) and
+#     third-party API protocol fields.
+# ======================================================================
+
+
+# ----------------------------------------------------------------------
+# Shared
+# ----------------------------------------------------------------------
+
+image_extensions: [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"]
+
+review:
+  # Predictions below this are flagged for human review
+  # (used by roi_ui and ocr_dataset_builder).
+  confidence_threshold: 0.90
+
+
+# ----------------------------------------------------------------------
+# Pipeline behaviour (main.py)
+# ----------------------------------------------------------------------
+
+pipeline:
+  use_annotation_detection: true    # true: OCR each detected ROI; false: OCR the whole margin
+  use_annotation_removal: true      # erase red/green reviewer ink before detection
+  save_rois: true                   # write each ROI crop to <pdf>/roi/
+  save_debug_images: true           # write the annotated detection image to <pdf>/recognizer/
+  skip_existing_outputs: true       # skip a PDF whose output folder already exists
+  verbose: true                     # per-component / per-candidate console logging
+
+paths:
+  input_dir: data/input_pdfs
+  output_dir: outputs
+  pdf_glob: "*.pdf"
+
+layout:
+  deskewed_dir: deskewed
+  vertical_dir: vertical
+  detected_dir: detected
+  cropped_dir: cropped
+  failed_dir: failed
+  annotation_removed_dir: annotation_removed
+  preprocessed_dir: preprocessed
+  recognizer_dir: recognizer
+  roi_dir: roi
+  ocr_dir: ocr
+
+  page_image: "page_{page:03d}.png"
+  page_mask: "page_{page:03d}_mask.png"
+  page_gray: "page_{page:03d}_gray.png"
+  page_binary: "page_{page:03d}_binary.png"
+  page_vertical: "page_{page:03d}_vertical.png"
+  roi_image: "page_{page:03d}_roi_{roi}.png"
+  ocr_csv: "page_{page:03d}.csv"
+  report_csv: report.csv
+  summary_csv: summary.csv
+
+
+# ----------------------------------------------------------------------
+# Image-processing stages
+# ----------------------------------------------------------------------
+
+pdf:
+  dpi: 300
+  # Every document opens with a 2-page cover: a marks-grid facing sheet
+  # (no margin/answer-column split, so separator detection always fails)
+  # followed by its blank flip side. Skipping both makes page_001 the
+  # first page that has annotation-margin content.
+  skip_pages: 2
+  save_debug: false
+  debug_dir: null                   # where rendered pages go when save_debug is true
+  debug_page_image: "page_{page:03d}.png"
+
+deskew:
+  angle_min: -5.0
+  angle_max: 5.0
+  coarse_step: 0.5
+  fine_step: 0.05
+  fine_window: 0.5                  # +/- degrees searched around the coarse optimum
+  border_value: 255                 # fill for the corners exposed by rotation
+  # If the coarse optimum lands on angle_min/angle_max the metric is
+  # diverging (near-blank page / dominant watermark); trust this angle instead.
+  edge_fallback_angle: 0.0
+
+vertical:
+  threshold: 180                    # gray level below which a pixel counts as ink/line
+  min_kernel_height: 80
+  kernel_height_divisor: 25         # kernel height = max(min_kernel_height, page_height // this)
+  repair_kernel: [3, 15]            # [width, height] closing kernel that repairs broken lines
+
+separator:
+  left_ratio: 0.03                  # ignore lines closer than this to the left edge
+  right_ratio: 0.30                 # ignore lines beyond this fraction of the page width
+  min_height_ratio: 0.50            # line must span at least this fraction of the page height
+  min_aspect_ratio: 40              # height / width
+  # Set both to pick the candidate nearest a known x; leave null to take the left-most.
+  expected_x: null
+  tolerance: null
+
+crop:
+  right_padding: 5                  # pixels kept to the right of the separator
+
+ink_removal:                        # HSV (OpenCV: H 0-179, S/V 0-255)
+  red_lower1: [0, 100, 60]
+  red_upper1: [15, 255, 255]
+  red_lower2: [168, 100, 60]
+  red_upper2: [179, 255, 255]
+  green_lower: [40, 100, 60]
+  green_upper: [100, 255, 255]
+  kernel_size: 5
+  close_iterations: 2
+  dilate_iterations: 2
+  # Anti-aliased fringe pixels around coloured ink are too faint for the
+  # strict HSV range. Only within a generous dilation of a confirmed mask
+  # component, treat any non-white pixel as ink.
+  remove_fringe: true
+  fringe_zone_kernel_size: 11
+  fringe_zone_iterations: 4
+  fringe_lightness_max: 250
+  # A tiny strict-mask hit is more likely a false trigger than real ink;
+  # only components at least this large earn the wider fringe search.
+  fringe_min_component_area: 500
+  fill_color: [255, 255, 255]       # BGR colour painted over removed ink
+
+preprocess:
+  min_area: 20                      # drop connected components smaller than this (px)
+  # On a blank page Otsu can land a few gray levels from the background
+  # mean and flood the binary with noise. Require the threshold to sit at
+  # least this far below the mean, else the binary is blanked.
+  min_contrast_gap: 30
+
+annotation_detector:
+  # -- component filters (before merging) --
+  min_width: 4
+  min_height: 3
+  padding: 10                       # added around each final ROI
+  merge_dist: 16                    # boxes closer than this are merged
+  # -- confidence filters (after merging) --
+  min_confident_area: 70
+  min_confident_dim: 4
+  min_ink_pixels: 15
+  min_fill_ratio: 0.03
+  row_y_tolerance: 18               # boxes whose vertical centres are this close form one row/ROI
+
+  # Printed header rule near the top: anything entirely above it is bleed-through.
+  reject_above_top_line: true
+  top_line_search_frac: 0.2         # search the top fraction of the crop
+  top_line_min_len_ratio: 0.6       # rule must span this fraction of the width
+  top_line_margin: 5
+
+  # Sparse, elongated strokes (hand-drawn arrows/connectors).
+  exclude_sparse_strokes: true
+  sparse_stroke_density_max: 0.12
+  sparse_stroke_min_dim: 80
+
+  # Long narrow vertical strips (page-edge shadows, ruled-line remnants).
+  exclude_long_vertical_strips: true
+  long_strip_max_width: 30
+  long_strip_min_height: 100
+
+  # Splitting of unusually tall merged ROIs at horizontal-projection valleys.
+  refine_height: 140                # only ROIs taller than this are refined
+  valley_threshold: 0.15            # fraction of peak projection that counts as a valley
+  min_valley_width: 5               # consecutive low rows required
+  min_segment_height: 20            # no piece shorter than this
+  refine_blur_ksize: 9              # projection smoothing (odd)
+
+  # Printed-line removal / top-rule search.
+  line_kernel_min: 30               # line kernel length = max(this, dimension // divisor)
+  line_kernel_divisor: 4
+  line_dilate_kernel: 3
+
+visualization:                      # debug overlays (BGR)
+  separator_candidate_color: [0, 255, 0]
+  separator_candidate_thickness: 2
+  separator_selected_color: [0, 0, 255]
+  separator_selected_thickness: 4
+  roi_color: [0, 0, 255]
+  roi_thickness: 2
+
+
+# ----------------------------------------------------------------------
+# OCR backends
+# ----------------------------------------------------------------------
+
+ocr:
+  backend: parseq                   # parseq | lmstudio
+  use_backend_preprocessing: true   # whole-margin mode only
+
+  parseq:
+    # PARSeq runs in a separate venv (strhub lives there), as a subprocess.
+    # Path layout below is the Windows one; change for Linux/macOS (venv/bin/python).
+    venv_python: ocr_dataset_builder/venv/Scripts/python.exe
+    checkpoint: ocr_dataset_builder/models/parseq_base_mix_v2.ckpt
+    device: auto                    # auto | cpu | cuda
+    norm_mean: 0.5
+    norm_std: 0.5
+    shutdown_timeout: 10            # seconds to wait for the worker to exit
+
+  lmstudio:
+    model: mistralai/ministral-3-3b
+    host: http://127.0.0.1:1234/v1
+    api_key: lm-studio
+    temperature: 0
+    debug_image_path: null          # e.g. outputs/lmstudio_debug/input.png to save each request image
+    preprocess:
+      denoise_h: 10
+      template_window: 7
+      search_window: 21
+      sharpen_kernel:
+        - [0, -1, 0]
+        - [-1, 5, -1]
+        - [0, -1, 0]
+    prompt: |
+
+      Extract all visible text from the image as individual items (words, numbers, or short labels).
+
+      Output Requirements:
+
+      Return ONLY a raw JSON array (no markdown fences, no extra text).
+
+      Order items from top-to-bottom, then left-to-right.
+
+      Use normalized coordinates between 0.0 and 1.0 (top-left is 0.0, 0.0, bottom-right is 1.0, 1.0), rounded to 3 decimal places.
+
+      [
+        {
+          "text": "detected text",
+          "bounding_box": {
+            "left": 0.000,
+            "top": 0.000,
+            "right": 0.000,
+            "bottom": 0.000
+          },
+          "center": {
+            "x": 0.000,
+            "y": 0.000
+          }
+        }
+      ] Return exactly ONE JSON array
+
+
+# ----------------------------------------------------------------------
+# ROI watcher UI (roi_ui/app.py)
+# ----------------------------------------------------------------------
+
+roi_ui:
+  input_dir: data/roi_watch/input
+  output_dir: data/roi_watch/output
+  review_csv_name: review_queue.csv # written next to output_dir
+  host: 127.0.0.1
+  port: 5000
+  poll_seconds: 1.0
+  stable_polls: 2                   # file must be unchanged this many polls before it is read
+  max_results: 300
+
+  # annotated-image rendering (colours are RGB here: Pillow)
+  caption_height: 64
+  min_canvas_width: 260
+  canvas_bg: [24, 24, 24]
+  text_color: [255, 255, 255]
+  error_color: [230, 70, 70]
+  error_detail_color: [200, 200, 200]
+  error_detail_max_chars: 60
+  font_candidates: ["arial.ttf", "DejaVuSans.ttf"]
+  font_size_text: 20
+  font_size_small: 15
+  text_x: 8
+  label_y: 6
+  confidence_y: 32
+  error_y: 8
+  error_detail_y: 34
+
+  # confidence bands for the coloured badge / caption
+  confidence_high: 0.8
+  confidence_mid: 0.5
+  color_high: [70, 200, 100]
+  color_mid: [230, 170, 40]
+  color_low: [220, 80, 80]
+
+  # browser polling
+  status_poll_ms: 2000
+  results_poll_ms: 1500
+
+
+# ----------------------------------------------------------------------
+# Dataset builder (ocr_dataset_builder/run.py)
+# ----------------------------------------------------------------------
+
+dataset_builder:
+  env_file: .env                    # holds MISTRAL_API_KEY
+  dataset_dir: ocr_dataset_builder/dataset
+  image_dir: ocr_dataset_builder/dataset/all_roi_images
+  completed_dir: ocr_dataset_builder/dataset/completed
+  preview_dir: ocr_dataset_builder/dataset/preview
+  annotations_csv: ocr_dataset_builder/dataset/annotations.csv
+  review_csv: ocr_dataset_builder/dataset/parseq_review_queue.csv
+  batch_size: 500
+
+  # mistral (hosted API) | parseq (local). Override per run with --backend
+  # or the OCR_BACKEND environment variable.
+  ocr_backend: mistral
+
+  # low_confidence: flag only predictions below review.confidence_threshold
+  # all: flag every prediction (building a new training batch).
+  # Override per run with --review or the PARSEQ_REVIEW_MODE environment variable.
+  review_mode: low_confidence
+
+  parseq_venv_python: ocr_dataset_builder/venv/Scripts/python.exe
+  parseq_checkpoint: ocr_dataset_builder/models/parseq_final.ckpt
+
+  mistral:
+    base_url: https://api.mistral.ai
+    model: mistral-ocr-latest
+    fallback_mime_type: image/png
+
+  preview:
+    font_name: arial.ttf
+    font_size: 18
+    max_chars: 80
+    text_color: [0, 255, 0]         # RGB (Pillow)
+    stroke_width: 1
+    stroke_fill: black
+    margin: 5
+
+
+# ----------------------------------------------------------------------
+# Tools and research scripts
+# ----------------------------------------------------------------------
+
+roi_consolidator:
+  root_dir: outputs
+  dest_dir: outputs/all_roi_images
+  doc_glob: "Doc*"
+
+inspect_thresholds:
+  report_csv: threshold_report.csv
+  debug_dir: threshold_debug
+  accepted_color: [0, 200, 0]
+  rejected_color: [0, 0, 255]
+  box_thickness: 2
+  font_scale: 0.4
+  font_thickness: 1
+  label_offset: 5
+  label_min_y: 10
+
+research:
+  prepare_roi_dataset:
+    input_dir: data/input_pdfs
+    output_dir: data/roi_dataset
+    # These two intentionally differ from main.py (crop.right_padding = 5,
+    # pdf.skip_pages = 2) to preserve this script's historical output.
+    # Set them equal to main.py's values for identical ROIs.
+    right_padding: 15
+    skip_pages: 0
+    roi_filename: "{pdf}_page_{page:03d}_roi_{roi:03d}.png"
+
+  ocr_preprocessor:
+    method: connected_components
+    scale: 4
+    min_area: 200
+    kernel_size: 2
+    iterations: 1
+    denoise_h: 10
+
+  evaluate:
+    dataset_dir: data/roi_dataset
+    output_csv: research/results/csv/evaluation.csv
+    preprocessed_dir: research/results/preprocessed
+    ocr_dir: research/results/ocr
+    backend: lmstudio
+    use_backend_preprocessing: false
+
+  benchmark:
+    image_path: sample_crop.png
+    output_dir: research/results/images

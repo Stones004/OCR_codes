@@ -18,7 +18,7 @@ python run.py
 
 The pipeline will
 
-- Process the first 1000 images
+- Process the first `dataset_builder.batch_size` images (500 by default)
 - Send them to Mistral OCR
 - Save OCR output to `annotations.csv`
 - Move processed images to `completed/`
@@ -43,9 +43,12 @@ python run.py --backend parseq
 python run.py --backend mistral
 ```
 
-Or change the default in `src/config.py` (`OCR_BACKEND`), or set the
-`OCR_BACKEND` environment variable. The checkpoint used for the `parseq`
-backend is configured via `PARSEQ_CHECKPOINT` in `src/config.py`.
+Or change the default in the repo-root `config.yaml`
+(`dataset_builder.ocr_backend`), or set the `OCR_BACKEND` environment variable.
+The checkpoint used for the `parseq` backend is `dataset_builder.parseq_checkpoint`
+in `config.yaml`. All builder settings (paths, batch size, review mode, Mistral
+model, preview text) live in the `dataset_builder` section of that file; use
+`--config other.yaml` to run with a different one.
 
 ### Setting up the `parseq` backend's venv
 
@@ -70,7 +73,7 @@ image) are meant to make that review fast.
 Which predictions get flagged depends on `--review`:
 
 - `--review low_confidence` (default) — only predictions below
-  `PARSEQ_CONFIDENCE_THRESHOLD` (`src/config.py`) are flagged. Use this
+  `review.confidence_threshold` (`config.yaml`) are flagged. Use this
   for production inference, where most predictions are trusted as-is and
   only the uncertain ones need a second look.
 - `--review all` — every prediction is flagged. Use this when building a

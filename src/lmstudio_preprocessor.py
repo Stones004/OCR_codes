@@ -8,17 +8,19 @@ strip to the vision-language OCR model.
 import cv2
 import numpy as np
 
+from src.config import LMStudioPreprocessConfig
+
 
 class LMStudioPreprocessor:
 
-    def __init__(self):
+    def __init__(self, config: LMStudioPreprocessConfig):
+
+        self.denoise_h = config.denoise_h
+        self.template_window = config.template_window
+        self.search_window = config.search_window
 
         # Sharpening kernel
-        self.kernel = np.array([
-            [0, -1, 0],
-            [-1, 5, -1],
-            [0, -1, 0]
-        ], dtype=np.float32)
+        self.kernel = np.array(config.sharpen_kernel, dtype=np.float32)
 
     # --------------------------------------------------
 
@@ -36,9 +38,9 @@ class LMStudioPreprocessor:
         denoised = cv2.fastNlMeansDenoising(
             gray,
             None,
-            h=10,
-            templateWindowSize=7,
-            searchWindowSize=21
+            h=self.denoise_h,
+            templateWindowSize=self.template_window,
+            searchWindowSize=self.search_window
         )
 
         # Sharpen handwriting

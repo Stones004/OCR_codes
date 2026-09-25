@@ -11,48 +11,25 @@ import cv2
 import numpy as np
 from pathlib import Path
 
+from src.config import OcrPreprocessorConfig
+
 class OCRPreprocessor:
 
-    def __init__(
-        self,
-        method="connected_components",
-        scale=4,
+    def __init__(self, config: OcrPreprocessorConfig):
+
+        self.method = config.method.lower()
+
+        self.scale = config.scale
 
         # Connected Components
-        min_area=200,
-
-        # Bilateral
-        bilateral_d=9,
-        bilateral_sigma_color=75,
-        bilateral_sigma_space=75,
+        self.min_area = config.min_area
 
         # Morphology
-        kernel_size=2,
-        iterations=1,
+        self.kernel_size = config.kernel_size
+        self.iterations = config.iterations
 
-        # Gamma
-        gamma=2.0,
-
-        # Rolling Ball
-        rolling_radius=80
-    ):
-
-        self.method = method.lower()
-
-        self.scale = scale
-
-        self.min_area = min_area
-
-        self.bilateral_d = bilateral_d
-        self.bilateral_sigma_color = bilateral_sigma_color
-        self.bilateral_sigma_space = bilateral_sigma_space
-
-        self.kernel_size = kernel_size
-        self.iterations = iterations
-
-        self.gamma_value = gamma
-
-        self.rolling_radius = rolling_radius
+        # Non-local-means denoising strength (otsu method)
+        self.denoise_h = config.denoise_h
 
         self.methods = {
             "connected_components": self.connected_components,
@@ -122,7 +99,7 @@ class OCRPreprocessor:
     def otsu(self, gray):
         denoised = cv2.fastNlMeansDenoising(
             gray,
-            h=10
+            h=self.denoise_h
         )
 
         _, binary = cv2.threshold(

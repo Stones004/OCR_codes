@@ -1,6 +1,6 @@
 # OCR & Annotation Extraction Pipeline
 
-An end-to-end Python pipeline designed for processing scanned PDF documents. The system performs page rendering, image deskewing, vertical separator line detection, margin/ROI cropping, preprocessing, annotation detection/removal, and OCR text extraction using configurable backends (e.g., LM Studio vision models, TrOCR). It also includes an AI-assisted OCR dataset builder suite and research benchmark tools.
+An end-to-end Python pipeline designed for processing scanned PDF documents. The system performs page rendering, image deskewing, vertical separator line detection, margin/ROI cropping, preprocessing, annotation detection/removal, and OCR text extraction using configurable backends (e.g., the local PARSeq model or LM Studio vision models). It also includes an AI-assisted OCR dataset builder suite and research benchmark tools.
 
 ---
 
@@ -21,7 +21,8 @@ An end-to-end Python pipeline designed for processing scanned PDF documents. The
   - [3. Set Up Virtual Environment](#3-set-up-virtual-environment)
   - [4. Install Dependencies](#4-install-dependencies)
   - [5. Environment Configuration](#5-environment-configuration)
-  - [6. OCR Backend Prerequisites (LM Studio / TrOCR)](#6-ocr-backend-prerequisites-lm-studio--trocr)
+  - [6. OCR Backend Prerequisites (PARSeq / LM Studio)](#6-ocr-backend-prerequisites-parseq--lm-studio)
+  - [7. Setting up on a fresh clone](#7-setting-up-on-a-fresh-clone)
 - [Commands for Different Tasks](#commands-for-different-tasks)
   - [Task 1: Run End-to-End OCR Pipeline](#task-1-run-end-to-end-ocr-pipeline)
   - [Task 2: Consolidate Extracted ROI Images](#task-2-consolidate-extracted-roi-images)
@@ -42,7 +43,7 @@ An end-to-end Python pipeline designed for processing scanned PDF documents. The
 - **ROI & Margin Cropping**: Crops target text margins and extracts region-of-interest (ROI) annotation blocks.
 - **Image Preprocessing**: Enhances contrast (CLAHE, morphology, binarization, denoising) for high-accuracy OCR.
 - **Annotation Detection & Masking**: Detects handwritten/typed margin annotations and offers masking capabilities.
-- **Modular OCR Engines**: Pluggable backend support including **LM Studio** local Vision LLMs and HuggingFace **TrOCR**.
+- **Modular OCR Engines**: Pluggable backend support including the local **PARSeq** model and **LM Studio** local Vision LLMs.
 - **Dataset Builder Suite**: Automated AI-assisted dataset labeling pipeline powered by Mistral AI API integration.
 - **Research Tools**: Utilities for dataset preparation, benchmarking preprocessing techniques, and evaluating OCR performance metrics.
 
@@ -99,7 +100,7 @@ OCR_codes/
 │   │   ├── base.py                  # Abstract base class interface for OCR backends
 │   │   ├── factory.py               # Factory for instantiating configured OCR backend
 │   │   ├── lmstudio.py              # LM Studio local Vision LLM integration
-│   │   └── trocr.py                 # HuggingFace TrOCR vision-transformer integration
+│   │   └── parseq.py                # Local PARSeq handwriting model (subprocess worker)
 │   ├── annotation_detector.py       # Detects bounding boxes for handwritten/typed annotations
 │   ├── annotation_remover.py        # Removes or masks detected annotations from page images
 │   ├── config.py                    # Global pipeline configuration dataclass (PipelineConfig)
@@ -124,12 +125,12 @@ OCR_codes/
 │   ├── test_mistral.py              # Tests for Mistral API integration
 │   ├── test_mistral_local.py        # Tests for local Mistral server interaction
 │   ├── test_ocr.py                  # Tests for OCR base class and factory instantiation
-│   ├── test_overlap.py              # Tests for bounding box overlap and merging algorithms
 │   ├── test_preprocessor.py         # Tests for image binarization and preprocessing routines
 │   ├── test_recognizer.py           # Tests for text recognition wrapper components
 │   └── test_vertical.py             # Tests for vertical separator line extraction
 │
-├── .env                             # Environment variables configuration (API keys, endpoints)
+├── config.yaml                      # ALL settings (single source of truth)
+├── .env                             # Secrets (MISTRAL_API_KEY)
 ├── .gitignore                       # Git exclusion specification
 ├── main.py                          # Primary execution script for end-to-end OCR processing
 ├── README.md                        # Master project documentation
@@ -168,7 +169,7 @@ Below is a one-line description for every code file in the repository:
 - [src/ocr/base.py](file:///g:/OCR_codes/src/ocr/base.py): Defines the abstract base class and standard interface (`BaseOCR`) for all OCR backends.
 - [src/ocr/factory.py](file:///g:/OCR_codes/src/ocr/factory.py): Implements factory pattern (`OCRFactory`) to instantiate the selected OCR engine backend.
 - [src/ocr/lmstudio.py](file:///g:/OCR_codes/src/ocr/lmstudio.py): OCR backend implementation integrating with local LM Studio Vision LLM HTTP endpoints.
-- [src/ocr/trocr.py](file:///g:/OCR_codes/src/ocr/trocr.py): OCR backend implementation integrating with HuggingFace TrOCR vision-transformer models.
+- [src/ocr/parseq.py](file:///g:/OCR_codes/src/ocr/parseq.py): OCR backend that runs the fine-tuned PARSeq model in a subprocess (worker in `src/ocr/parseq_worker.py`).
 
 ### OCR Dataset Builder (`ocr_dataset_builder/`)
 - [ocr_dataset_builder/run.py](file:///g:/OCR_codes/ocr_dataset_builder/run.py): Entry point script to launch the AI-assisted dataset builder pipeline.
@@ -194,7 +195,6 @@ Below is a one-line description for every code file in the repository:
 - [tests/test_mistral.py](file:///g:/OCR_codes/tests/test_mistral.py): Integration tests verifying Mistral AI API request/response handling.
 - [tests/test_mistral_local.py](file:///g:/OCR_codes/tests/test_mistral_local.py): Integration tests verifying local API server communications.
 - [tests/test_ocr.py](file:///g:/OCR_codes/tests/test_ocr.py): Unit tests verifying base OCR engine interfaces and factory instantiation.
-- [tests/test_overlap.py](file:///g:/OCR_codes/tests/test_overlap.py): Unit tests verifying bounding box overlap logic and box merging operations.
 - [tests/test_preprocessor.py](file:///g:/OCR_codes/tests/test_preprocessor.py): Unit tests verifying image binarization and preprocessing pipelines.
 - [tests/test_recognizer.py](file:///g:/OCR_codes/tests/test_recognizer.py): Unit tests verifying text recognizer wrapper components.
 - [tests/test_vertical.py](file:///g:/OCR_codes/tests/test_vertical.py): Unit tests verifying vertical separator line detection algorithms.
@@ -208,7 +208,7 @@ Follow these steps to set up and run the codebase on **Windows**, **macOS**, or 
 ### 1. Prerequisites
 - **Python 3.8+** (Python 3.10+ recommended)
 - **Git**
-- *(Optional)* **CUDA-capable GPU** with drivers installed if running local neural models (TrOCR/PyTorch) with hardware acceleration.
+- *(Optional)* **CUDA-capable GPU** with drivers installed if running local neural models (PARSeq/PyTorch) with hardware acceleration.
 
 Verify Python version:
 ```bash
@@ -254,11 +254,9 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> **Note on PyTorch (GPU Acceleration):**  
-> `requirements.txt` installs standard CPU PyTorch packages by default. To enable GPU acceleration with CUDA on Windows/Linux, install CUDA PyTorch binaries from the [official PyTorch website](https://pytorch.org/get-started/locally/):
-> ```bash
-> pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-> ```
+> **Note on PyTorch:** the root environment does not need PyTorch. The local PARSeq
+> model runs in its own venv (`ocr_dataset_builder/venv`, CUDA build), see
+> "Setting up on a fresh clone" below.
 
 ### 5. Environment Configuration
 
@@ -268,14 +266,42 @@ Create or update the `.env` file in the root project directory with your credent
 MISTRAL_API_KEY=your_api_key_here
 ```
 
-### 6. OCR Backend Prerequisites (LM Studio / TrOCR)
+### 6. OCR Backend Prerequisites (PARSeq / LM Studio)
 
-- **LM Studio (Default Backend):**
+- **LM Studio (`ocr.backend: lmstudio`):**
   1. Download and open [LM Studio](https://lmstudio.ai/).
   2. Load a Vision LLM model (e.g., Qwen2-VL, Llama-3-Vision).
   3. Start the **Local Inference Server** inside LM Studio (default URL: `http://localhost:1234`).
-- **TrOCR Backend:**
-  1. Standard PyTorch environment; required models will automatically download from HuggingFace on first run.
+- **PARSeq (`ocr.backend: parseq`, the default):**
+  1. Create the PARSeq venv described in `ocr_dataset_builder/README.md`.
+  2. Point `ocr.parseq.venv_python` and `ocr.parseq.checkpoint` in `config.yaml` at it.
+
+### 7. Setting up on a fresh clone
+
+`git clone` gives you the code and `config.yaml`, but **not** the large or private
+files, which are git-ignored. Checklist for a new machine:
+
+| # | Step | Needed for | Command / location |
+|---|---|---|---|
+| 1 | Root venv + packages | everything | `python -m venv venv` then `venv\Scripts\pip install -r requirements.txt` |
+| 2 | PARSeq venv (has `torch` + `strhub`) | `ocr.backend: parseq` (the default), dataset builder | `cd ocr_dataset_builder`, `python -m venv venv`, `venv\Scripts\pip install -r requirements.txt` |
+| 3 | PARSeq checkpoints (not in git) | `parseq` backend | copy into `ocr_dataset_builder/models/`: `parseq_base_mix_v2.ckpt` (scanner) and `parseq_final.ckpt` (dataset builder). Names are set in `config.yaml` |
+| 4 | Input PDFs (not in git) | `main.py` | put them in `data/input_pdfs/` |
+| 5 | `MISTRAL_API_KEY` in `.env` | dataset builder `--backend mistral` only | one line: `MISTRAL_API_KEY=...` |
+| 6 | LM Studio server | `ocr.backend: lmstudio` only | start its local server; set `ocr.lmstudio.model` / `host` |
+
+Then run `python main.py`.
+
+Things to adjust in `config.yaml` if your machine differs:
+
+- `ocr.parseq.venv_python` and `dataset_builder.parseq_venv_python` use the Windows
+  layout (`venv/Scripts/python.exe`); on Linux/macOS use `venv/bin/python`.
+- `ocr.parseq.device` is `auto` (GPU if available, else CPU).
+- Relative paths resolve against the folder containing `config.yaml`, so you can run
+  the scripts from any directory.
+
+Steps 2 and 3 are only needed for the PARSeq backend, and `openai` is only imported
+when `ocr.backend` is `lmstudio`. Nothing needs to be edited in the Python code.
 
 ---
 
@@ -372,13 +398,20 @@ Runs the automated test suite to verify line detection, deskewing, OCR backends,
 
 ## Pipeline Configuration
 
-Customize execution parameters by modifying [src/config.py](file:///g:/OCR_codes/src/config.py):
+Every setting lives in [config.yaml](config.yaml). There are no defaults in the
+Python code, so edit the YAML, not the source. A missing or mistyped key stops the
+program at startup and names the key.
 
-| Setting | Default Value | Description |
-| :--- | :--- | :--- |
-| `OCR_BACKEND` | `"lmstudio"` | Active OCR backend (`"lmstudio"` or `"trocr"`) |
-| `USE_ANNOTATION_DETECTION` | `False` | `True` enables ROI-based region extraction before OCR; `False` runs full margin OCR |
-| `SAVE_DEBUG_IMAGES` | `True` | Saves intermediate debug visualization images in `outputs/` |
-| `SAVE_ROIS` | `True` | Saves cropped ROI snippets to `outputs/<pdf>/roi/` |
-| `OCR_MAX_TOKENS` | `64` | Maximum token length for vision model generations |
-| `USE_OCR_PREPROCESSOR` | `True` | Applies image contrast/denoising preprocessor prior to OCR |
+```bash
+python main.py                          # uses ./config.yaml
+python main.py --config runs/strict.yaml   # another file (or set OCR_CONFIG)
+```
+
+Sections: `pipeline` (feature flags), `paths`/`layout` (folders and file names),
+`pdf`, `deskew`, `vertical`, `separator`, `crop`, `ink_removal`, `preprocess`,
+`annotation_detector`, `visualization`, `ocr` (`parseq` / `lmstudio`),
+`review`, `roi_ui`, `dataset_builder`, `roi_consolidator`, `inspect_thresholds`,
+`research`. Relative paths resolve against the folder that contains the YAML file.
+
+See [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md) for the data flow and a "what to change
+where" table. The schema is in `src/config.py`.

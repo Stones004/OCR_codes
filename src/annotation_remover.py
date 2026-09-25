@@ -1,90 +1,48 @@
 import cv2
 import numpy as np
 
+from src.config import InkRemovalConfig
+
+
 class AnnotationRemover:
 
-    def __init__(
-        self,
+    def __init__(self, config: InkRemovalConfig):
 
-        # -------------------------
-        # Red HSV
-        # -------------------------
-        #red_lower1=(0, 20, 20),
-        #red_lower1 = (0, 80, 40),
-        red_lower1 = (0, 100, 60),
-        red_upper1=(15, 255, 255),
+        # Red / green HSV ranges. Anti-aliased "fringe" pixels around the
+        # coloured ink are too faint (low saturation) to match the strict
+        # ranges directly, but loosening them globally risks matching real
+        # black/gray ink, since near-gray pixels have unstable hue. So the
+        # fringe pass only trusts "any non-white pixel" within a generous
+        # dilation of confirmed mask components. See config.yaml
+        # (ink_removal) for the values and their rationale.
 
-        #red_lower2=(165, 20, 20),
-        #red_lower2 = (165, 80, 40),
-        red_lower2 = (168, 100, 60),
-        red_upper2=(179, 255, 255),
+        self.red_lower1 = np.array(config.red_lower1, dtype=np.uint8)
+        self.red_upper1 = np.array(config.red_upper1, dtype=np.uint8)
 
-        # -------------------------
-        # Green HSV
-        # -------------------------
-        #green_lower=(30, 20, 20),
-        #green_lower = (35, 80, 40),
-        green_lower = (40, 100, 60),
-        green_upper=(100, 255, 255),
+        self.red_lower2 = np.array(config.red_lower2, dtype=np.uint8)
+        self.red_upper2 = np.array(config.red_upper2, dtype=np.uint8)
 
-        kernel_size=5,
-        close_iterations=2,
-        dilate_iterations=2,
-
-        use_inpaint=True,
-        inpaint_radius=5,
-
-        # Anti-aliased/chromatic-fringe edge pixels around the colored
-        # ink are too faint (low saturation) to match the strict HSV
-        # range directly, but loosening that range globally risks
-        # matching real black/gray ink too, since near-gray pixels have
-        # unstable, noisy hue at low saturation. Instead, only trust a
-        # loose "any non-white pixel" pass within a generous dilation of
-        # the strict mask -- real content elsewhere on the page is
-        # spatially far from any confirmed red/green ink and is never
-        # touched by it.
-        remove_fringe=True,
-        fringe_zone_kernel_size=11,
-        fringe_zone_iterations=4,
-        fringe_lightness_max=250,
-
-        # A tiny strict-mask hit (a handful of pixels) is more likely a
-        # false trigger -- e.g. a JPEG-compression edge artifact next to
-        # dark ink of an unrelated color -- than genuine red/green ink.
-        # Expanding the fringe zone around one of those would erase real
-        # nearby content instead of cleaning up a real halo, so only
-        # components at least this large earn the wider fringe search.
-        fringe_min_component_area=500,
-    ):
-
-        self.red_lower1 = np.array(red_lower1, dtype=np.uint8)
-        self.red_upper1 = np.array(red_upper1, dtype=np.uint8)
-
-        self.red_lower2 = np.array(red_lower2, dtype=np.uint8)
-        self.red_upper2 = np.array(red_upper2, dtype=np.uint8)
-
-        self.green_lower = np.array(green_lower, dtype=np.uint8)
-        self.green_upper = np.array(green_upper, dtype=np.uint8)
+        self.green_lower = np.array(config.green_lower, dtype=np.uint8)
+        self.green_upper = np.array(config.green_upper, dtype=np.uint8)
 
         self.kernel = np.ones(
-            (kernel_size, kernel_size),
+            (config.kernel_size, config.kernel_size),
             np.uint8
         )
 
-        self.close_iterations = close_iterations
-        self.dilate_iterations = dilate_iterations
+        self.close_iterations = config.close_iterations
+        self.dilate_iterations = config.dilate_iterations
 
-        self.use_inpaint = use_inpaint
-        self.inpaint_radius = inpaint_radius
-
-        self.remove_fringe = remove_fringe
+        self.remove_fringe = config.remove_fringe
         self.fringe_zone_kernel = np.ones(
-            (fringe_zone_kernel_size, fringe_zone_kernel_size),
+            (config.fringe_zone_kernel_size, config.fringe_zone_kernel_size),
             np.uint8
         )
-        self.fringe_zone_iterations = fringe_zone_iterations
-        self.fringe_lightness_max = fringe_lightness_max
-        self.fringe_min_component_area = fringe_min_component_area
+        self.fringe_zone_iterations = config.fringe_zone_iterations
+        self.fringe_lightness_max = config.fringe_lightness_max
+        self.fringe_min_component_area = config.fringe_min_component_area
+
+        self.fill_color = tuple(config.fill_color)
 
     def create_mask(self, image):
 
@@ -174,7 +132,7 @@ class AnnotationRemover:
 
         cleaned = image.copy()
 
-        cleaned[mask > 0] = (255, 255, 255)
+        cleaned[mask > 0] = self.fill_color
 
         return cleaned
 
@@ -183,6 +141,6 @@ class AnnotationRemover:
         mask = self.create_mask(image)
 
         cleaned = image.copy()
-        cleaned[mask > 0] = (255, 255, 255)
+        cleaned[mask > 0] = self.fill_color
 
         return cleaned, mask

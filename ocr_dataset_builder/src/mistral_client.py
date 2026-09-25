@@ -4,16 +4,20 @@ import requests
 
 from dotenv import load_dotenv
 
-from .config import MODEL
+from .config import CFG
 from .config import ENV_FILE
 
 load_dotenv(ENV_FILE)
 
 class MistralOCR:
 
-    BASE_URL = "https://api.mistral.ai"
-
     def __init__(self):
+
+        settings = CFG.dataset_builder.mistral
+
+        self.base_url = settings.base_url
+        self.model = settings.model
+        self.fallback_mime_type = settings.fallback_mime_type
 
         self.api_key = os.getenv("MISTRAL_API_KEY")
 
@@ -26,7 +30,7 @@ class MistralOCR:
 
     def upload_file(self, image_path):
 
-        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        mime_type = mimetypes.guess_type(image_path)[0] or self.fallback_mime_type
 
         with open(image_path, "rb") as f:
 
@@ -43,7 +47,7 @@ class MistralOCR:
             }
 
             response = requests.post(
-                f"{self.BASE_URL}/v1/files",
+                f"{self.base_url}/v1/files",
                 headers=self.headers,
                 files=files,
                 data=data,
@@ -56,7 +60,7 @@ class MistralOCR:
     def get_signed_url(self, file_id):
 
         response = requests.get(
-            f"{self.BASE_URL}/v1/files/{file_id}/url",
+            f"{self.base_url}/v1/files/{file_id}/url",
             headers=self.headers,
         )
 
@@ -71,7 +75,7 @@ class MistralOCR:
         headers["Content-Type"] = "application/json"
 
         payload = {
-            "model": MODEL,
+            "model": self.model,
             "document": {
                 "type": "document_url",
                 "document_url": signed_url,
@@ -79,7 +83,7 @@ class MistralOCR:
         }
 
         response = requests.post(
-            f"{self.BASE_URL}/v1/ocr",
+            f"{self.base_url}/v1/ocr",
             headers=headers,
             json=payload,
         )

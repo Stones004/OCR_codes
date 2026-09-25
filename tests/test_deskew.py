@@ -1,19 +1,19 @@
 from pathlib import Path
+from src.config import load_config
 from src.pdf_loader import PDFLoader
 from src.deskewer import Deskewer
 
 import cv2
 
-loader = PDFLoader(
-    dpi=300,
-    save_debug=False
-)
+cfg = load_config()
+
+loader = PDFLoader(cfg.pdf)
 
 pages = loader.load_pdf(
     "data/input_pdfs/P5.pdf"
 )
 
-deskewer = Deskewer()
+deskewer = Deskewer(cfg.deskew)
 
 output = Path("deskew_results")
 output.mkdir(exist_ok=True)

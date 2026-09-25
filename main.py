@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import cv2
@@ -11,7 +12,7 @@ from src.cropper import Cropper
 from src.annotation_detector import AnnotationDetector
 from src.preprocessor import Preprocessor
 from src.roi_text_extractor import ROITextExtractor
-from src.config import PipelineConfig
+from src.config import load_config
 from src.annotation_remover import AnnotationRemover
 import numpy as np
 
@@ -23,61 +24,66 @@ End-to-end pipeline for processing scanned PDFs. The pipeline loads
 each document, deskews pages, detects the separator line, crops the
 annotation margin, preprocesses the image, detects handwritten
 annotations, performs OCR and exports the extracted results.
+
+Every parameter comes from config.yaml (or the file given with --config /
+the OCR_CONFIG environment variable); there are no tunables in this file.
 """
 
-config = PipelineConfig()
+parser = argparse.ArgumentParser(description="Annotation extraction pipeline")
+parser.add_argument(
+    "--config",
+    default=None,
+    help="Path to a config YAML (default: $OCR_CONFIG, else <repo>/config.yaml)",
+)
+args, _ = parser.parse_known_args()
+
+cfg = load_config(args.config)
+
+pipeline_cfg = cfg.pipeline
+layout = cfg.layout
+
 # --------------------------------------------------
 # Paths
 # --------------------------------------------------
 
-#INPUT_DIR = Path("data/input_pdfs")
-INPUT_DIR = Path(r"G:\ICT_Scripts")
-OUTPUT_DIR = Path("outputs")
+INPUT_DIR = cfg.paths.input_dir
+OUTPUT_DIR = cfg.paths.output_dir
 
-OUTPUT_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # --------------------------------------------------
 # Modules
 # --------------------------------------------------
 
-loader = PDFLoader(
-    dpi=300,
-    save_debug=False,
-    # Every document in this dataset opens with a 2-page cover: a
-    # marks-grid facing sheet (no left-margin/answer-column split, so
-    # separator detection always fails on it) followed by its blank
-    # flip side. Skip both so page_NNN output labels start at the
-    # first page that actually has annotation-margin content.
-    skip_pages=2
+loader = PDFLoader(cfg.pdf)
+
+deskewer = Deskewer(cfg.deskew)
+
+extractor = VerticalExtractor(cfg.vertical, verbose=pipeline_cfg.verbose)
+
+line_detector = LineDetector(
+    cfg.separator,
+    cfg.visualization,
+    verbose=pipeline_cfg.verbose,
 )
 
-deskewer = Deskewer()
+cropper = Cropper(cfg.crop)
 
-extractor = VerticalExtractor(
-    threshold=180,
-    kernel_height=None
+preprocessor = Preprocessor(cfg.preprocess)
+
+annotation_detector = AnnotationDetector(
+    cfg.annotation_detector,
+    cfg.visualization,
+    verbose=pipeline_cfg.verbose,
 )
 
-line_detector = LineDetector()
+annotation_remover = AnnotationRemover(cfg.ink_removal)
 
-cropper = Cropper(
-    right_padding=5
-)
-
-preprocessor = Preprocessor(
-)
-
-annotation_detector = AnnotationDetector()
-
-annotation_remover = AnnotationRemover()
-
-#text_extractor = ROITextExtractor(
-#    backend=config.OCR_BACKEND
-#)
+text_extractor = ROITextExtractor(cfg.ocr)
 
 summary = []
 
-pdf_files = sorted(INPUT_DIR.glob("*.pdf"))
+pdf_files = sorted(INPUT_DIR.glob(cfg.paths.pdf_glob))
 
 print(f"\nFound {len(pdf_files)} PDF(s)\n")
 
@@ -91,7 +97,7 @@ for pdf_path in pdf_files:
     pdf_output = OUTPUT_DIR / pdf_name
 
     # Skip processing if output directory for this PDF already exists
-    if pdf_output.exists():
+    if pipeline_cfg.skip_existing_outputs and pdf_output.exists():
         print("=" * 70)
         print(f"Skipping (Already Processed - Folder Exists): {pdf_name}")
         print("=" * 70)
@@ -101,16 +107,16 @@ for pdf_path in pdf_files:
     print(f"Processing : {pdf_name}")
     print("=" * 70)
 
-    deskew_dir = pdf_output / "deskewed"
-    vertical_dir = pdf_output / "vertical"
-    detected_dir = pdf_output / "detected"
-    cropped_dir = pdf_output / "cropped"
-    failed_dir = pdf_output / "failed"
-    preprocessed_dir = pdf_output / "preprocessed"
-    recognizer_dir = pdf_output / "recognizer"
-    roi_dir = pdf_output / "roi"
-    ocr_dir = pdf_output / "ocr"
-    annotation_removed_dir = pdf_output / "annotation_removed"
+    deskew_dir = pdf_output / layout.deskewed_dir
+    vertical_dir = pdf_output / layout.vertical_dir
+    detected_dir = pdf_output / layout.detected_dir
+    cropped_dir = pdf_output / layout.cropped_dir
+    failed_dir = pdf_output / layout.failed_dir
+    preprocessed_dir = pdf_output / layout.preprocessed_dir
+    recognizer_dir = pdf_output / layout.recognizer_dir
+    roi_dir = pdf_output / layout.roi_dir
+    ocr_dir = pdf_output / layout.ocr_dir
+    annotation_removed_dir = pdf_output / layout.annotation_removed_dir
 
     for folder in [
         deskew_dir,
@@ -148,7 +154,7 @@ for pdf_path in pdf_files:
         corrected, angle = deskewer.process(page)
 
         cv2.imwrite(
-            str(deskew_dir / f"page_{page_idx+1:03d}.png"),
+            str(deskew_dir / layout.page_image.format(page=page_idx + 1)),
             corrected
         )
 
@@ -159,7 +165,7 @@ for pdf_path in pdf_files:
         vertical, debug = extractor.extract(corrected)
 
         cv2.imwrite(
-            str(vertical_dir / f"page_{page_idx+1:03d}.png"),
+            str(vertical_dir / layout.page_image.format(page=page_idx + 1)),
             vertical
         )
 
@@ -170,7 +176,7 @@ for pdf_path in pdf_files:
         detected, separator = line_detector.detect(vertical)
 
         cv2.imwrite(
-            str(detected_dir / f"page_{page_idx+1:03d}.png"),
+            str(detected_dir / layout.page_image.format(page=page_idx + 1)),
             detected
         )
 
@@ -179,17 +185,17 @@ for pdf_path in pdf_files:
             print("Separator : FAILED")
 
             cv2.imwrite(
-                str(failed_dir / f"page_{page_idx+1:03d}_gray.png"),
+                str(failed_dir / layout.page_gray.format(page=page_idx + 1)),
                 debug["gray"]
             )
 
             cv2.imwrite(
-                str(failed_dir / f"page_{page_idx+1:03d}_binary.png"),
+                str(failed_dir / layout.page_binary.format(page=page_idx + 1)),
                 debug["binary"]
             )
 
             cv2.imwrite(
-                str(failed_dir / f"page_{page_idx+1:03d}_vertical.png"),
+                str(failed_dir / layout.page_vertical.format(page=page_idx + 1)),
                 vertical
             )
 
@@ -216,7 +222,7 @@ for pdf_path in pdf_files:
         )
 
         cv2.imwrite(
-            str(cropped_dir / f"page_{page_idx+1:03d}.png"),
+            str(cropped_dir / layout.page_image.format(page=page_idx + 1)),
             crop
         )
 
@@ -224,7 +230,7 @@ for pdf_path in pdf_files:
         # Annotation Removal
         # ------------------------------------------
 
-        if config.USE_ANNOTATION_REMOVAL:
+        if pipeline_cfg.use_annotation_removal:
 
             clean_crop, mask = annotation_remover.process_debug(crop)
 
@@ -240,7 +246,7 @@ for pdf_path in pdf_files:
         cv2.imwrite(
             str(
                 annotation_removed_dir /
-                f"page_{page_idx+1:03d}.png"
+                layout.page_image.format(page=page_idx + 1)
             ),
             clean_crop
         )
@@ -248,7 +254,7 @@ for pdf_path in pdf_files:
         cv2.imwrite(
             str(
                 annotation_removed_dir /
-                f"page_{page_idx+1:03d}_mask.png"
+                layout.page_mask.format(page=page_idx + 1)
             ),
             mask
         )
@@ -260,12 +266,12 @@ for pdf_path in pdf_files:
         gray, binary = preprocessor.process(clean_crop)
 
         cv2.imwrite(
-            str(preprocessed_dir / f"page_{page_idx + 1:03d}_gray.png"),
+            str(preprocessed_dir / layout.page_gray.format(page=page_idx + 1)),
             gray
         )
 
         cv2.imwrite(
-            str(preprocessed_dir / f"page_{page_idx + 1:03d}_binary.png"),
+            str(preprocessed_dir / layout.page_binary.format(page=page_idx + 1)),
             binary
         )
 
@@ -273,13 +279,13 @@ for pdf_path in pdf_files:
         # OCR
         # ------------------------------------------
 
-        if config.USE_ANNOTATION_DETECTION:
+        if pipeline_cfg.use_annotation_detection:
 
             print("Mode : ROI OCR")
 
             rois, debug = annotation_detector.detect(gray, binary)
 
-            if config.SAVE_ROIS:
+            if pipeline_cfg.save_rois:
 
                 for i, roi in enumerate(rois):
 
@@ -287,44 +293,50 @@ for pdf_path in pdf_files:
 
                         str(
                             roi_dir /
-                            f"page_{page_idx+1:03d}_roi_{i+1}.png"
+                            layout.roi_image.format(
+                                page=page_idx + 1,
+                                roi=i + 1
+                            )
                         ),
 
                         roi["roi"]
 
                     )
             
-            if config.SAVE_DEBUG_IMAGES:
+            if pipeline_cfg.save_debug_images:
 
                 cv2.imwrite(
 
                     str(
                         recognizer_dir /
-                        f"page_{page_idx+1:03d}.png"
+                        layout.page_image.format(page=page_idx + 1)
                     ),
 
                     debug["detected"]
 
                 )
 
-            #extracted_text = text_extractor.extract(
-            #    gray,
-            #    rois
-            #)
+            extracted_text = text_extractor.extract(
+                gray,
+                rois
+            )
 
         else:
 
             print("Mode : Full Margin OCR")
 
-            #extracted_text = text_extractor.extract(
-            #    gray
-            #)
+            extracted_text = text_extractor.extract(
+                gray
+            )
 
         # ------------------------------------------
         # Save OCR Results
         # ------------------------------------------
 
-        
+        pd.DataFrame(extracted_text).to_csv(
+            ocr_dir / layout.ocr_csv.format(page=page_idx + 1),
+            index=False
+        )
 
         print(f"Separator : {separator['x']}")
         results.append({
@@ -345,7 +357,7 @@ for pdf_path in pdf_files:
     df = pd.DataFrame(results)
 
     df.to_csv(
-        pdf_output / "report.csv",
+        pdf_output / layout.report_csv,
         index=False
     )
 
@@ -386,7 +398,7 @@ for pdf_path in pdf_files:
 summary_df = pd.DataFrame(summary)
 
 summary_df.to_csv(
-    OUTPUT_DIR / "summary.csv",
+    OUTPUT_DIR / layout.summary_csv,
     index=False
 )
 

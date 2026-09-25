@@ -14,36 +14,25 @@ For every image in the dataset:
     evaluation.csv
 """
 
+import argparse
 from pathlib import Path
 import time
 
 import cv2
 import pandas as pd
 
+from src.config import load_config
 from src.ocr_preprocessor import OCRPreprocessor
 from src.roi_text_extractor import ROITextExtractor
-
-
-# ----------------------------------------------------------
-# CONFIG
-# ----------------------------------------------------------
-
-#DATASET = Path("outputs/P1/roi")
-
-DATASET = Path("data/roi_dataset/")
-
-OUTPUT = Path("research/results/csv/evaluation.csv")
-
-BACKEND = "lmstudio"
 
 
 # ----------------------------------------------------------
 # DATASET
 # ----------------------------------------------------------
 
-def load_dataset(folder):
+def load_dataset(folder, extensions):
 
-    exts = {".png", ".jpg", ".jpeg", ".tif"}
+    exts = set(extensions)
 
     return sorted(
 
@@ -66,16 +55,28 @@ def load_dataset(folder):
 
 def main():
 
-    preprocessor = OCRPreprocessor()
+    parser = argparse.ArgumentParser(description="Evaluate preprocessing methods")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to a config YAML (default: $OCR_CONFIG, else <repo>/config.yaml)",
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    settings = cfg.research.evaluate
+
+    preprocessor = OCRPreprocessor(cfg.research.ocr_preprocessor)
 
     ocr = ROITextExtractor(
-        backend=BACKEND,
-        use_backend_preprocessing=False
+        cfg.ocr,
+        backend=settings.backend,
+        use_backend_preprocessing=settings.use_backend_preprocessing
     )
 
     results = []
 
-    images = load_dataset(DATASET)
+    images = load_dataset(settings.dataset_dir, cfg.image_extensions)
 
     print(f"\nFound {len(images)} image(s)\n")
 
@@ -107,7 +108,7 @@ def main():
 
             )
 
-            save_dir = Path("research/results/preprocessed") / method
+            save_dir = settings.preprocessed_dir / method
             save_dir.mkdir(parents=True, exist_ok=True)
 
             cv2.imwrite(
@@ -155,7 +156,7 @@ def main():
             # SAVE OCR TEXT
             # --------------------------------------
 
-            ocr_dir = Path("research/results/ocr") / method
+            ocr_dir = settings.ocr_dir / method
             ocr_dir.mkdir(parents=True, exist_ok=True)
 
             with open(
@@ -219,7 +220,7 @@ def main():
 
     df = pd.DataFrame(results)
 
-    OUTPUT.parent.mkdir(
+    settings.output_csv.parent.mkdir(
 
         parents=True,
 
@@ -229,7 +230,7 @@ def main():
 
     df.to_csv(
 
-        OUTPUT,
+        settings.output_csv,
 
         index=False
 
@@ -239,7 +240,7 @@ def main():
 
     print(df.head())
 
-    print(f"\nSaved to:\n{OUTPUT}")
+    print(f"\nSaved to:\n{settings.output_csv}")
 
 
 if __name__ == "__main__":

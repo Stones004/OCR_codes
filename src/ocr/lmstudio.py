@@ -2,63 +2,36 @@
 LM Studio OCR
 
 Performs OCR on a complete cropped annotation strip using a vision-language
-model served locally through LM Studio.
+model served locally through LM Studio. Model, host, prompt and sampling
+settings come from config.yaml (ocr.lmstudio).
 """
 
-from email import contentmanager
 import base64
 import json
-import re
 
 import cv2
 from openai import OpenAI
-from .base import OCRBackend
+
+from src.config import LMStudioConfig
 from src.lmstudio_preprocessor import LMStudioPreprocessor
+
+from .base import OCRBackend
+
 
 class LMStudioBackend(OCRBackend):
 
-    def __init__(
-        self,
-        #model="google/gemma-3-12b",
-        model="mistralai/ministral-3-3b",
-        host="http://127.0.0.1:1234/v1",
-    ):
+    def __init__(self, config: LMStudioConfig):
 
-        self.model = model
+        self.model = config.model
+        self.temperature = config.temperature
+        self.prompt = config.prompt
+        self.debug_image_path = config.debug_image_path
 
         self.client = OpenAI(
-            base_url=host,
-            api_key="lm-studio",
+            base_url=config.host,
+            api_key=config.api_key,
         )
-        self.preprocessor = LMStudioPreprocessor()
-
-        self.prompt = """
-Extract all visible text from the image as individual items (words, numbers, or short labels).
-
-Output Requirements:
-
-Return ONLY a raw JSON array (no markdown fences, no extra text).
-
-Order items from top-to-bottom, then left-to-right.
-
-Use normalized coordinates between 0.0 and 1.0 (top-left is 0.0, 0.0, bottom-right is 1.0, 1.0), rounded to 3 decimal places.
-
-[
-  {
-    "text": "detected text",
-    "bounding_box": {
-      "left": 0.000,
-      "top": 0.000,
-      "right": 0.000,
-      "bottom": 0.000
-    },
-    "center": {
-      "x": 0.000,
-      "y": 0.000
-    }
-  }
-] Return exactly ONE JSON array
-"""
+        self.preprocessor = LMStudioPreprocessor(config.preprocess)
 
     # --------------------------------------------------
 
@@ -69,10 +42,9 @@ Use normalized coordinates between 0.0 and 1.0 (top-left is 0.0, 0.0, bottom-rig
         if preprocess:
             image = self.preprocessor.process(image)
 
-        cv2.imwrite(
-            "lmstudio_processed/lmstudio_input.png",
-            image
-        )
+        if self.debug_image_path is not None:
+            self.debug_image_path.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(self.debug_image_path), image)
 
         success, buffer = cv2.imencode(".png", image)
 
@@ -83,7 +55,7 @@ Use normalized coordinates between 0.0 and 1.0 (top-left is 0.0, 0.0, bottom-rig
 
         response = self.client.chat.completions.create(
             model=self.model,
-            temperature=0,
+            temperature=self.temperature,
             messages=[
                 {
                     "role": "user",

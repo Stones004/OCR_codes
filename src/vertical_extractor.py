@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from src.config import VerticalConfig
+
 
 """
 Vertical Line Extractor
@@ -12,11 +14,12 @@ used to locate the table separator.
 
 class VerticalExtractor:
 
-    def __init__(self,
-                 threshold=180,
-                 kernel_height=120):
-        self.threshold = threshold
-        self.kernel_height = kernel_height
+    def __init__(self, config: VerticalConfig, verbose: bool):
+        self.threshold = config.threshold
+        self.min_kernel_height = config.min_kernel_height
+        self.kernel_height_divisor = config.kernel_height_divisor
+        self.repair_kernel_size = tuple(config.repair_kernel)
+        self.verbose = verbose
 
     def extract(self, image):
 
@@ -52,17 +55,15 @@ class VerticalExtractor:
 
         height, width = image.shape[:2]
 
-        kernel_height = max(80, height // 25)
-
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT,
-            (1, kernel_height)
+        kernel_height = max(
+            self.min_kernel_height,
+            height // self.kernel_height_divisor
         )
 
         # Repair broken lines
         repair_kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT,
-            (3, 15)
+            self.repair_kernel_size
         )
 
         binary = cv2.morphologyEx(
@@ -72,11 +73,6 @@ class VerticalExtractor:
         )
 
         # Now isolate vertical objects
-        '''vertical_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT,
-            (1, 120)
-        )'''
-
         vertical_kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT,
             (1, kernel_height)
@@ -90,9 +86,10 @@ class VerticalExtractor:
 
         debug["vertical"] = vertical
 
-        print("Inside VerticalExtractor")
-        print(vertical.shape)
-        print(vertical.dtype)
-        print(np.unique(vertical))
+        if self.verbose:
+            print("Inside VerticalExtractor")
+            print(vertical.shape)
+            print(vertical.dtype)
+            print(np.unique(vertical))
 
         return vertical, debug

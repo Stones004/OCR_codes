@@ -75,28 +75,27 @@ for c in candidates:
 from pathlib import Path
 import cv2
 
+from src.config import load_config
 from src.pdf_loader import PDFLoader
 from src.vertical_extractor import VerticalExtractor
 from src.line_detector import LineDetector
 from src.deskewer import Deskewer
 
-loader = PDFLoader(
-    dpi=300,
-    save_debug=False
-)
+cfg = load_config()
+
+loader = PDFLoader(cfg.pdf)
 
 pages = loader.load_pdf(
     "data/input_pdfs/Doc0555.pdf"
 )
 
-extractor = VerticalExtractor(
-    threshold=180,
-    kernel_height=None      # Dynamic
+extractor = VerticalExtractor(cfg.vertical, verbose=cfg.pipeline.verbose)
+
+deskewer = Deskewer(cfg.deskew)
+
+detector = LineDetector(
+    cfg.separator, cfg.visualization, verbose=cfg.pipeline.verbose
 )
-
-deskewer = Deskewer()
-
-detector = LineDetector()
 
 output_dir = Path("vertical_tests")
 output_dir.mkdir(exist_ok=True)

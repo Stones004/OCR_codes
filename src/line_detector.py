@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from src.config import SeparatorConfig, VisualizationConfig
+
 
 """
 Separator Detector
@@ -14,32 +16,44 @@ class LineDetector:
 
     def __init__(
         self,
-        left_ratio=0.03,
-        right_ratio=0.30,
-        expected_x=None,
-        tolerance=None
+        config: SeparatorConfig,
+        visualization: VisualizationConfig,
+        verbose: bool,
     ):
         """
-        Parameters
-        ----------
-        left_ratio : float
+        config.left_ratio : float
             Ignore detections too close to the left page border.
 
-        right_ratio : float
+        config.right_ratio : float
             Ignore detections beyond this percentage of the page width.
 
-        expected_x : int | None
+        config.min_height_ratio : float
+            Minimum component height as a fraction of the page height.
+
+        config.min_aspect_ratio : float
+            Minimum height / width of a component.
+
+        config.expected_x : int | None
             Expected x-coordinate of the separator.
 
-        tolerance : int | None
+        config.tolerance : int | None
             Allowed deviation from expected_x.
         """
 
-        self.left_ratio = left_ratio
-        self.right_ratio = right_ratio
+        self.left_ratio = config.left_ratio
+        self.right_ratio = config.right_ratio
+        self.min_height_ratio = config.min_height_ratio
+        self.min_aspect_ratio = config.min_aspect_ratio
 
-        self.expected_x = expected_x
-        self.tolerance = tolerance
+        self.expected_x = config.expected_x
+        self.tolerance = config.tolerance
+
+        self.candidate_color = tuple(visualization.separator_candidate_color)
+        self.candidate_thickness = visualization.separator_candidate_thickness
+        self.selected_color = tuple(visualization.separator_selected_color)
+        self.selected_thickness = visualization.separator_selected_thickness
+
+        self.verbose = verbose
 
     def detect(self, vertical):
 
@@ -71,10 +85,10 @@ class LineDetector:
 
             reason = None
 
-            if height < h * 0.50:
+            if height < h * self.min_height_ratio:
                 reason = f"Too short ({height}px)"
 
-            elif ( height / width) < 40:
+            elif ( height / width) < self.min_aspect_ratio:
                 reason = f"Poor aspect ratio ({(height / width):.1f})"
 
             elif x < LEFT_LIMIT:
@@ -84,11 +98,12 @@ class LineDetector:
                 reason = f"Outside left half (x={x})"
 
             if reason is not None:
-                print(
-                    f"Rejected Component {i} | "
-                    f"x={x}, y={y}, w={width}, h={height} | "
-                    f"Reason: {reason}"
-                )
+                if self.verbose:
+                    print(
+                        f"Rejected Component {i} | "
+                        f"x={x}, y={y}, w={width}, h={height} | "
+                        f"Reason: {reason}"
+                    )
 
                 continue
 
@@ -116,19 +131,20 @@ class LineDetector:
                 output,
                 (x, y),
                 (x + width, y + height),
-                (0, 255, 0),
-                2
+                self.candidate_color,
+                self.candidate_thickness
             )
 
-            print("\nValid Candidates")
+            if self.verbose:
+                print("\nValid Candidates")
 
-            for c in candidates:
-                print(
-                    f"x={c['x']}, "
-                    f"h={c['h']}, "
-                    f"w={c['w']}, "
-                    f"area={c['area']}"
-                )
+                for c in candidates:
+                    print(
+                        f"x={c['x']}, "
+                        f"h={c['h']}, "
+                        f"w={c['w']}, "
+                        f"area={c['area']}"
+                    )
 
         # ------------------------------------------------
         # No candidates
@@ -163,7 +179,7 @@ class LineDetector:
 
         else:
 
-            # First run:
+            # No expected position configured:
             # choose the left-most candidate.
 
             best = min(
@@ -171,18 +187,17 @@ class LineDetector:
                 key=lambda c: c["x"]
             )
 
-
-
-        # Draw best candidate in RED
+        # Draw best candidate
         cv2.rectangle(
             output,
             (best["x"], best["y"]),
             (best["x"] + best["w"], best["y"] + best["h"]),
-            (0, 0, 255),
-            4
+            self.selected_color,
+            self.selected_thickness
         )
 
-        print("\nSelected Candidate")
-        print(best)
+        if self.verbose:
+            print("\nSelected Candidate")
+            print(best)
 
         return output, best

@@ -2,6 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from .config import CFG
 from .config import PARSEQ_VENV_PYTHON
 from .config import PARSEQ_CHECKPOINT
 
@@ -11,6 +12,10 @@ WORKER_SCRIPT = Path(__file__).resolve().parent / "parseq_worker.py"
 class ParseqOCR:
 
     def __init__(self):
+
+        worker = CFG.ocr.parseq
+
+        self.shutdown_timeout = worker.shutdown_timeout
 
         if not PARSEQ_VENV_PYTHON.exists():
             raise FileNotFoundError(
@@ -22,8 +27,21 @@ class ParseqOCR:
                 f"PARSeq checkpoint not found: {PARSEQ_CHECKPOINT}"
             )
 
+        # Worker settings (device, normalisation) come from config.yaml
+        # (ocr.parseq) and travel as one JSON argument.
+        worker_settings = json.dumps({
+            "device": worker.device,
+            "norm_mean": worker.norm_mean,
+            "norm_std": worker.norm_std,
+        })
+
         self.process = subprocess.Popen(
-            [str(PARSEQ_VENV_PYTHON), str(WORKER_SCRIPT), str(PARSEQ_CHECKPOINT)],
+            [
+                str(PARSEQ_VENV_PYTHON),
+                str(WORKER_SCRIPT),
+                str(PARSEQ_CHECKPOINT),
+                worker_settings,
+            ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -66,4 +84,4 @@ class ParseqOCR:
 
         if self.process and self.process.poll() is None:
             self.process.stdin.close()
-            self.process.wait(timeout=10)
+            self.process.wait(timeout=self.shutdown_timeout)

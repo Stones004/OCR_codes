@@ -3,10 +3,11 @@ from pathlib import Path
 import cv2
 import matplotlib.pyplot as plt
 
+from src.config import load_config
 from src.preprocessor import Preprocessor
 
 
-processor = Preprocessor(scale=2)
+processor = Preprocessor(load_config().preprocess)
 
 image = cv2.imread(
     "outputs/P5/cropped/page_003.png"

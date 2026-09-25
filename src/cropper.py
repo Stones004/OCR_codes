@@ -1,5 +1,4 @@
-import cv2
-
+from src.config import CropConfig
 
 
 """
@@ -13,13 +12,13 @@ and OCR.
 
 class Cropper:
 
-    def __init__(self, right_padding=15):
+    def __init__(self, config: CropConfig):
         """
-        right_padding :
+        config.right_padding :
             Number of pixels to include AFTER the separator.
         """
 
-        self.right_padding = right_padding
+        self.right_padding = config.right_padding
 
     def crop(self, image, separator):
 

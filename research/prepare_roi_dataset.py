@@ -30,28 +30,34 @@ data/
         ...
 """
 
-from pathlib import Path
+import argparse
+
 import cv2
 import fitz
 import numpy as np
 from tqdm import tqdm
 
+from src.config import CropConfig, load_config
 from src.deskewer import Deskewer
 from src.vertical_extractor import VerticalExtractor
 from src.line_detector import LineDetector
 from src.cropper import Cropper
 from src.annotation_detector import AnnotationDetector
+from src.pdf_loader import PDF_POINTS_PER_INCH
 
 # ============================================================
-# Configuration
+# Configuration (config.yaml: research.prepare_roi_dataset + shared stages)
 # ============================================================
 
-INPUT_DIR = Path("data/input_pdfs")
-OUTPUT_DIR = Path("data/roi_dataset")
+cfg = None            # set in main()
+settings = None       # cfg.research.prepare_roi_dataset
 
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-DPI = 300
+# Pipeline stages, built from config by build_components()
+deskewer = None
+vertical_extractor = None
+line_detector = None
+cropper = None
+annotation_detector = None
 
 
 # ============================================================
@@ -62,10 +68,10 @@ def pdf_to_images(pdf_path):
 
     document = fitz.open(pdf_path)
 
-    zoom = DPI / 72
+    zoom = cfg.pdf.dpi / PDF_POINTS_PER_INCH
     matrix = fitz.Matrix(zoom, zoom)
 
-    for page_number in range(len(document)):
+    for page_number in range(settings.skip_pages, len(document)):
 
         page = document.load_page(page_number)
 
@@ -95,60 +101,6 @@ def pdf_to_images(pdf_path):
 
     document.close()
 
-
-# ============================================================
-# Preprocessor
-# ============================================================
-
-class Preprocessor:
-
-    def __init__(self, kernel_size=3):
-
-        self.kernel_size = kernel_size
-
-    def full_pipeline(self, gray):
-
-        _, binary = cv2.threshold(
-
-            gray,
-
-            0,
-
-            255,
-
-            cv2.THRESH_BINARY + cv2.THRESH_OTSU
-
-        )
-
-        kernel = np.ones(
-
-            (
-                self.kernel_size,
-                self.kernel_size
-            ),
-
-            np.uint8
-
-        )
-
-        return cv2.morphologyEx(
-
-            binary,
-
-            cv2.MORPH_CLOSE,
-
-            kernel
-
-        )
-
-    def process(self, image):
-
-        gray = cv2.cvtColor(
-            image,
-            cv2.COLOR_BGR2GRAY
-        )
-
-        return self.full_pipeline(gray)
 
 # ============================================================
 # Process One Page
@@ -208,9 +160,6 @@ def process_page(image):
         binary
     )
 
-    print(type(rois))
-    print(len(rois))
-
     return rois
 
 
@@ -254,15 +203,13 @@ def process_pdf(pdf_path):
 
         for roi_number, roi in enumerate(rois, start=1):
 
-            filename = (
-
-                f"{pdf_name}"
-                f"_page_{page_number:03d}"
-                f"_roi_{roi_number:03d}.png"
-
+            filename = settings.roi_filename.format(
+                pdf=pdf_name,
+                page=page_number,
+                roi=roi_number
             )
 
-            output_path = OUTPUT_DIR / filename
+            output_path = settings.output_dir / filename
 
             cv2.imwrite(
 
@@ -288,9 +235,51 @@ def process_pdf(pdf_path):
 # Main
 # ============================================================
 
+def build_components():
+    """Create the pipeline stages from config.yaml (module-level singletons)."""
+
+    global deskewer, vertical_extractor, line_detector, cropper
+    global annotation_detector
+
+    verbose = cfg.pipeline.verbose
+
+    deskewer = Deskewer(cfg.deskew)
+
+    vertical_extractor = VerticalExtractor(cfg.vertical, verbose=verbose)
+
+    line_detector = LineDetector(
+        cfg.separator, cfg.visualization, verbose=verbose
+    )
+
+    # This script's crop padding is configured separately from main.py's
+    # (research.prepare_roi_dataset.right_padding) to preserve its output.
+    cropper = Cropper(CropConfig(right_padding=settings.right_padding))
+
+    annotation_detector = AnnotationDetector(
+        cfg.annotation_detector, cfg.visualization, verbose=verbose
+    )
+
+
 def main():
 
-    pdfs = sorted(INPUT_DIR.glob("*.pdf"))
+    global cfg, settings
+
+    parser = argparse.ArgumentParser(description="Build the ROI dataset")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to a config YAML (default: $OCR_CONFIG, else <repo>/config.yaml)",
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    settings = cfg.research.prepare_roi_dataset
+
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
+
+    build_components()
+
+    pdfs = sorted(settings.input_dir.glob(cfg.paths.pdf_glob))
 
     if len(pdfs) == 0:
 
@@ -307,28 +296,8 @@ def main():
     print("\n===================================")
     print("ROI DATASET CREATION COMPLETE")
     print("===================================")
-    print(f"Saved to : {OUTPUT_DIR.resolve()}")
+    print(f"Saved to : {settings.output_dir.resolve()}")
 
-
-
-
-
-# ============================================================
-# Pipeline Components
-# ============================================================
-
-deskewer = Deskewer()
-
-preprocessor = Preprocessor()
-
-vertical_extractor = VerticalExtractor()
-
-line_detector = LineDetector()
-
-cropper = Cropper()
-
-annotation_detector = AnnotationDetector()
-# ============================================================
 
 if __name__ == "__main__":
 

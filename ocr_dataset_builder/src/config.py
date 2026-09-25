@@ -1,52 +1,95 @@
+"""
+Dataset builder configuration.
+
+Everything comes from the shared config.yaml at the repo root (the
+`dataset_builder` section, plus `review`, `image_extensions` and the
+`ocr.parseq` worker settings). This module only loads that file and
+re-exports the values under the names the rest of the builder uses.
+
+Two per-run environment overrides are honoured, as before:
+    OCR_BACKEND         -> dataset_builder.ocr_backend
+    PARSEQ_REVIEW_MODE  -> dataset_builder.review_mode
+and OCR_CONFIG selects an alternative YAML file.
+
+The root src/config.py is loaded by file path because this package is
+also called `src`, so a normal import would resolve to the wrong one.
+"""
+
+import importlib.util
 import os
-from pathlib import Path
-
-
+import sys
 from pathlib import Path
 
 OCR_ROOT = Path(__file__).resolve().parents[2]
-ENV_FILE = OCR_ROOT / ".env"
+
+
+def _load_root_config_module():
+
+    module_name = "ocr_root_config"
+
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        OCR_ROOT / "src" / "config.py",
+    )
+
+    module = importlib.util.module_from_spec(spec)
+
+    # dataclass type-hint resolution looks the module up by name
+    sys.modules[module_name] = module
+
+    spec.loader.exec_module(module)
+
+    return module
+
+
+_root_config = _load_root_config_module()
+
+CFG = _root_config.load_config()
+
+_B = CFG.dataset_builder
 
 # ==========================================================
-# Project Paths
+# Paths
 # ==========================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_FILE = _B.env_file
 
-DATASET_DIR = PROJECT_ROOT / "dataset"
+DATASET_DIR = _B.dataset_dir
 
-PREVIEW_FOLDER = DATASET_DIR / "preview"
+PREVIEW_FOLDER = _B.preview_dir
 
-IMAGE_FOLDER = Path(r"G:\OCR_codes\outputs_17-08\all_roi_images")
+IMAGE_FOLDER = _B.image_dir
 
-COMPLETED_FOLDER = DATASET_DIR / "completed"
+COMPLETED_FOLDER = _B.completed_dir
 
-CSV_FILE = DATASET_DIR / "annotations.csv"
+CSV_FILE = _B.annotations_csv
+
+# PARSeq predictions land here for review, NOT in annotations.csv --
+# they aren't trusted labels until a human confirms/corrects them.
+REVIEW_CSV = _B.review_csv
 
 # ==========================================================
 # OCR Settings
 # ==========================================================
 
-MODEL = "mistral-ocr-latest"
+MODEL = _B.mistral.model
 
-BATCH_SIZE = 500
+BATCH_SIZE = _B.batch_size
 
 # OCR backend: "mistral" (hosted API) or "parseq" (local fine-tuned model).
 # Override per-run with `python run.py --backend parseq`.
-OCR_BACKEND = os.getenv("OCR_BACKEND", "mistral")
+OCR_BACKEND = os.getenv("OCR_BACKEND", _B.ocr_backend)
 
 # ==========================================================
 # Local PARSeq Settings
 # ==========================================================
 
-PARSEQ_VENV_PYTHON = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
+PARSEQ_VENV_PYTHON = _B.parseq_venv_python
 
-PARSEQ_CHECKPOINT = (
-    PROJECT_ROOT / "models" / "parseq_finetuned_epoch21_acc93.57_ned94.93.ckpt"
-)
+PARSEQ_CHECKPOINT = _B.parseq_checkpoint
 
 # Predictions below this confidence are flagged for human review.
-PARSEQ_CONFIDENCE_THRESHOLD = 0.90
+PARSEQ_CONFIDENCE_THRESHOLD = CFG.review.confidence_threshold
 
 # "low_confidence": only flag predictions below PARSEQ_CONFIDENCE_THRESHOLD
 #   (production inference -- most predictions are trusted as-is).
@@ -54,22 +97,10 @@ PARSEQ_CONFIDENCE_THRESHOLD = 0.90
 #   (building a new training batch -- nothing is trusted until a human
 #   confirms it, since these will be fed back into fine-tuning).
 # Override per-run with `python run.py --review all`.
-PARSEQ_REVIEW_MODE = os.getenv("PARSEQ_REVIEW_MODE", "low_confidence")
-
-# PARSeq predictions land here for review, NOT in annotations.csv --
-# they aren't trusted labels until a human confirms/corrects them.
-REVIEW_CSV = DATASET_DIR / "parseq_review_queue.csv"
+PARSEQ_REVIEW_MODE = os.getenv("PARSEQ_REVIEW_MODE", _B.review_mode)
 
 # ==========================================================
 # Image Types
 # ==========================================================
 
-IMAGE_EXTENSIONS = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".bmp",
-    ".tif",
-    ".tiff",
-    ".webp",
-}
+IMAGE_EXTENSIONS = set(CFG.image_extensions)

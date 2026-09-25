@@ -14,12 +14,15 @@ from .config import (
     PREVIEW_FOLDER,
     IMAGE_EXTENSIONS,
     BATCH_SIZE,
+    CFG,
 )
 
 
 class FileManager:
 
     def __init__(self):
+        self.preview = CFG.dataset_builder.preview
+
         IMAGE_FOLDER.mkdir(parents=True, exist_ok=True)
         COMPLETED_FOLDER.mkdir(parents=True, exist_ok=True)
         PREVIEW_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -78,8 +81,10 @@ class FileManager:
         draw = ImageDraw.Draw(img)
 
         try:
-            font = ImageFont.truetype("arial.ttf", 18)
-        except:
+            font = ImageFont.truetype(
+                self.preview.font_name, self.preview.font_size
+            )
+        except OSError:
             font = ImageFont.load_default()
 
         # Clean OCR text
@@ -87,23 +92,23 @@ class FileManager:
         text = " ".join(text.split())
 
         # Limit text length
-        if len(text) > 80:
-            text = text[:80] + "..."
+        if len(text) > self.preview.max_chars:
+            text = text[:self.preview.max_chars] + "..."
 
         # Position at bottom-left
         bbox = draw.textbbox((0, 0), text, font=font)
         text_height = bbox[3] - bbox[1]
 
-        x = 5
-        y = img.height - text_height - 5
+        x = self.preview.margin
+        y = img.height - text_height - self.preview.margin
 
         draw.text(
             (x, y),
             text,
-            fill=(0, 255, 0),          # Bright Green
+            fill=tuple(self.preview.text_color),
             font=font,
-            stroke_width=1,
-            stroke_fill="black",       # Black outline
+            stroke_width=self.preview.stroke_width,
+            stroke_fill=self.preview.stroke_fill,
         )
 
         preview_path = PREVIEW_FOLDER / image_path.name

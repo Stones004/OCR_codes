@@ -1,8 +1,9 @@
-from pathlib import Path
-
 import fitz  # PyMuPDF
 import cv2
 import numpy as np
+from pathlib import Path
+
+from src.config import PdfConfig
 
 
 """
@@ -13,25 +14,26 @@ an OpenCV image for further processing. Optionally saves the rendered
 pages for debugging purposes.
 """
 
+# PDF user space is defined as 72 points per inch (a unit, not a tunable).
+PDF_POINTS_PER_INCH = 72
+
 
 class PDFLoader:
     """
     Loads scanned PDFs and converts each page into an OpenCV image.
     """
 
-    def __init__(
-        self,
-        dpi: int = 300,
-        save_debug: bool = False,
-        output_dir: str | None = None,
-        skip_pages: int = 2,
-    ):
-        self.dpi = dpi
-        self.save_debug = save_debug
-        self.output_dir = Path(output_dir) if output_dir else None
-        self.skip_pages = skip_pages
+    def __init__(self, config: PdfConfig):
+        self.dpi = config.dpi
+        self.save_debug = config.save_debug
+        self.output_dir = config.debug_dir
+        self.skip_pages = config.skip_pages
+        self.debug_page_image = config.debug_page_image
 
-        if self.save_debug and self.output_dir:
+        if self.save_debug:
+            if self.output_dir is None:
+                raise ValueError("pdf.save_debug is true but pdf.debug_dir is null")
+
             self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def load_pdf(self, pdf_path: str):
@@ -45,7 +47,7 @@ class PDFLoader:
 
         pages = []
 
-        zoom = self.dpi / 72
+        zoom = self.dpi / PDF_POINTS_PER_INCH
         matrix = fitz.Matrix(zoom, zoom)
 
         print("=" * 60)
@@ -85,7 +87,7 @@ class PDFLoader:
 
                 filename = (
                     self.output_dir /
-                    f"page_{page_number+1:03d}.png"
+                    self.debug_page_image.format(page=page_number + 1)
                 )
 
                 cv2.imwrite(

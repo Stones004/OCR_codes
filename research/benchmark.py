@@ -1,28 +1,38 @@
-from pathlib import Path
+import argparse
 
 import cv2
 
+from src.config import load_config
 from src.ocr_preprocessor import OCRPreprocessor
-
-
-IMAGE_PATH = Path("sample_crop.png")
-OUTPUT_DIR = Path("research/results/images")
 
 
 def main():
 
-    image = cv2.imread(str(IMAGE_PATH))
+    parser = argparse.ArgumentParser(description="Preprocessing benchmark")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to a config YAML (default: $OCR_CONFIG, else <repo>/config.yaml)",
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+
+    image_path = cfg.research.benchmark.image_path
+    output_dir = cfg.research.benchmark.output_dir
+
+    image = cv2.imread(str(image_path))
 
     if image is None:
-        raise FileNotFoundError(IMAGE_PATH)
+        raise FileNotFoundError(image_path)
 
-    preprocessor = OCRPreprocessor()
+    preprocessor = OCRPreprocessor(cfg.research.ocr_preprocessor)
 
     gray, outputs = preprocessor.benchmark(image)
 
     preprocessor.save_benchmark(
         outputs,
-        OUTPUT_DIR
+        output_dir
     )
 
     print("\nBenchmark complete!\n")
@@ -30,7 +40,7 @@ def main():
     print("Generated methods:")
 
     for method in outputs:
-        print(f"  ✓ {method}")
+        print(f"  - {method}")
 
 
 if __name__ == "__main__":

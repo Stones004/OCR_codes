@@ -5,52 +5,43 @@ Detects handwritten annotation regions by removing printed table
 lines, extracting connected components, merging nearby fragments and
 filtering candidates based on size and ink density. Returns cropped
 ROIs for OCR.
+
+Every threshold comes from config.yaml (annotation_detector); see the
+comments there for what each one does.
 """
 import cv2
 import numpy as np
+
+from src.config import AnnotationDetectorConfig, VisualizationConfig
+
 
 class AnnotationDetector:
 
     def __init__(
         self,
-        min_width=4, #8
-        min_height=3, #6
-        padding=10, #10
-        merge_dist=16, #25
-        min_confident_area=70, #350
-        min_confident_dim=4, #8
-        min_ink_pixels=15, #80
-        min_fill_ratio=0.03, #0.08
-        row_y_tolerance=18, #18
-        reject_above_top_line=True,
-        top_line_search_frac=0.2,
-        top_line_min_len_ratio=0.6,
-        top_line_margin=5,
-        exclude_sparse_strokes=True,
-        sparse_stroke_density_max=0.12,
-        sparse_stroke_min_dim=80,
-        exclude_long_vertical_strips=True,
-        long_strip_max_width=30,
-        long_strip_min_height=100,
+        config: AnnotationDetectorConfig,
+        visualization: VisualizationConfig,
+        verbose: bool,
     ):
 
-        self.min_width = min_width
-        self.min_height = min_height
-        self.padding = padding
-        self.merge_dist = merge_dist
+        self.min_width = config.min_width
+        self.min_height = config.min_height
+        self.padding = config.padding
+        self.merge_dist = config.merge_dist
 
-        self.min_confident_area = min_confident_area
-        self.min_confident_dim = min_confident_dim
-        self.min_ink_pixels = min_ink_pixels
-        self.min_fill_ratio = min_fill_ratio
+        self.min_confident_area = config.min_confident_area
+        self.min_confident_dim = config.min_confident_dim
+        self.min_ink_pixels = config.min_ink_pixels
+        self.min_fill_ratio = config.min_fill_ratio
+        self.row_y_tolerance = config.row_y_tolerance
 
         # Fixed printed horizontal line (e.g. a table header rule) near
         # the top of the crop. Anything entirely above it is header/table
         # bleed-through, not a handwritten annotation, so it is rejected.
-        self.reject_above_top_line = reject_above_top_line
-        self.top_line_search_frac = top_line_search_frac
-        self.top_line_min_len_ratio = top_line_min_len_ratio
-        self.top_line_margin = top_line_margin
+        self.reject_above_top_line = config.reject_above_top_line
+        self.top_line_search_frac = config.top_line_search_frac
+        self.top_line_min_len_ratio = config.top_line_min_len_ratio
+        self.top_line_margin = config.top_line_margin
 
         # Sparse, elongated strokes (hand-drawn arrows/pointers/connector
         # lines) have a low ink-density-per-bbox-area even though their
@@ -58,75 +49,36 @@ class AnnotationDetector:
         # step, their huge sparse bbox drags any real digit merged with
         # them below min_fill_ratio, rejecting both together. Dropping
         # them before merging keeps real digits isolated and intact.
-        self.exclude_sparse_strokes = exclude_sparse_strokes
-        self.sparse_stroke_density_max = sparse_stroke_density_max
-        self.sparse_stroke_min_dim = sparse_stroke_min_dim
+        self.exclude_sparse_strokes = config.exclude_sparse_strokes
+        self.sparse_stroke_density_max = config.sparse_stroke_density_max
+        self.sparse_stroke_min_dim = config.sparse_stroke_min_dim
 
         # Long, narrow vertical strips (page-edge shadows, ruled-line
         # remnants) are noise regardless of how dense they are -- a solid
         # thin line passes the sparse-stroke density check just fine, so
         # it needs its own plain width/height rule.
-        self.exclude_long_vertical_strips = exclude_long_vertical_strips
-        self.long_strip_max_width = long_strip_max_width
-        self.long_strip_min_height = long_strip_min_height
+        self.exclude_long_vertical_strips = config.exclude_long_vertical_strips
+        self.long_strip_max_width = config.long_strip_max_width
+        self.long_strip_min_height = config.long_strip_min_height
 
-        self.refine_height = 140          # Only refine tall ROIs
-        self.valley_threshold = 0.15      # 15% of max projection
-        self.min_valley_width = 5         # Consecutive empty rows
-        self.min_segment_height = 20      # Prevent tiny fragments
-        self.row_y_tolerance = row_y_tolerance
-    
+        # Splitting of unusually tall merged ROIs.
+        self.refine_height = config.refine_height
+        self.valley_threshold = config.valley_threshold
+        self.min_valley_width = config.min_valley_width
+        self.min_segment_height = config.min_segment_height
+        self.refine_blur_ksize = config.refine_blur_ksize
 
-    def _horizontal_projection(self, roi):
+        # Printed-line removal.
+        self.line_kernel_min = config.line_kernel_min
+        self.line_kernel_divisor = config.line_kernel_divisor
+        self.line_dilate_kernel = config.line_dilate_kernel
 
-        return np.count_nonzero(
-            roi,
-            axis=1
-        )
-    
-    def _smooth_projection(self, proj):
+        self.roi_color = tuple(visualization.roi_color)
+        self.roi_thickness = visualization.roi_thickness
 
-        kernel = np.ones(5) / 5
+        self.verbose = verbose
 
-        return np.convolve(
-            proj,
-            kernel,
-            mode="same"
-        )
-    
-
-    def _find_split_rows(
-        self,
-        projection
-    ):
-
-        threshold = 0.15 * projection.max()
-
-        valleys = []
-
-        start = None
-
-        for i, v in enumerate(projection):
-
-            if v < threshold:
-
-                if start is None:
-                    start = i
-
-            else:
-
-                if start is not None:
-
-                    if i - start >= 4:
-
-                        valleys.append(
-                            (start + i)//2
-                        )
-
-                    start = None
-
-        return valleys
-    
+    # --------------------------------------------------
 
     def _refine_rois(self, merged, binary):
         """
@@ -154,7 +106,7 @@ class AnnotationDetector:
             # Smooth projection
             projection = cv2.GaussianBlur(
                 projection.reshape(-1, 1),
-                (1, 9),
+                (1, self.refine_blur_ksize),
                 0
             ).flatten()
 
@@ -222,6 +174,26 @@ class AnnotationDetector:
 
     # --------------------------------------------------
 
+    def _line_kernels(self, h, w):
+        """
+        Horizontal and vertical structuring elements used to pick out
+        printed table lines.
+        """
+
+        horiz_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (max(self.line_kernel_min, w // self.line_kernel_divisor), 1)
+        )
+
+        vert_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (1, max(self.line_kernel_min, h // self.line_kernel_divisor))
+        )
+
+        return horiz_kernel, vert_kernel
+
+    # --------------------------------------------------
+
     def _find_top_line_y(self, binary):
         """
         Locate the fixed printed horizontal rule near the top of the
@@ -234,10 +206,7 @@ class AnnotationDetector:
 
         h, w = binary.shape
 
-        horiz_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT,
-            (max(30, w // 4), 1)
-        )
+        horiz_kernel, _ = self._line_kernels(h, w)
 
         horiz_lines = cv2.morphologyEx(
             binary,
@@ -263,26 +232,7 @@ class AnnotationDetector:
 
         h, w = binary.shape
 
-
-#        horiz_kernel = cv2.getStructuringElement(
-#            cv2.MORPH_RECT,
-#            (max(20, w // 15), 1)
-#        )
-
-#        vert_kernel = cv2.getStructuringElement(
-#            cv2.MORPH_RECT,
-#            (1, max(20, h // 15))
-#        ) 
-
-        horiz_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT,
-            (max(30, w // 4), 1)
-        )
-
-        vert_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT,
-            (1, max(30, h // 4))
-        )
+        horiz_kernel, vert_kernel = self._line_kernels(h, w)
 
         horiz_lines = cv2.morphologyEx(
             binary,
@@ -303,7 +253,7 @@ class AnnotationDetector:
 
         lines = cv2.dilate(
             lines,
-            np.ones((3, 3), np.uint8),
+            np.ones((self.line_dilate_kernel, self.line_dilate_kernel), np.uint8),
             iterations=1
         )
 
@@ -329,62 +279,9 @@ class AnnotationDetector:
             bx1 > ax2 or
             by2 < ay1 or
             by1 > ay2
-        ) 
-
-    """def _boxes_close(self, a, b):
-
-        #Decide whether two connected components belong to the same
-        #handwritten text instance.
-
-        ax1, ay1, ax2, ay2 = a
-        bx1, by1, bx2, by2 = b
-
-        aw = ax2 - ax1
-        ah = ay2 - ay1
-
-        bw = bx2 - bx1
-        bh = by2 - by1
-
-        # ----------------------------
-        # 1. Horizontal gap
-        # ----------------------------
-        if ax2 < bx1:
-            hgap = bx1 - ax2
-        elif bx2 < ax1:
-            hgap = ax1 - bx2
-        else:
-            hgap = 0
-
-        # ----------------------------
-        # 2. Vertical overlap
-        # ----------------------------
-        overlap = min(ay2, by2) - max(ay1, by1)
-
-        if overlap <= 0:
-            return False
-
-        overlap_ratio = overlap / float(min(ah, bh))
-
-        # ----------------------------
-        # 3. Adaptive horizontal gap
-        # ----------------------------
-        max_gap = max(
-            self.merge_dist,
-            int(0.5 * max(aw, bw))
         )
 
-        # ----------------------------
-        # 4. Merge decision
-        # ----------------------------
-        return (
-            overlap_ratio >= 0.40 and
-            hgap <= max_gap
-        ) """
-
-    # The above function was perfect for numbers but broke on roman numerals 
     # --------------------------------------------------
-
-
 
     def _merge_boxes(self, boxes):
 
@@ -429,7 +326,6 @@ class AnnotationDetector:
         return boxes
 
     # --------------------------------------------------
-
 
     def _group_boxes_by_y(self, boxes):
         """
@@ -601,59 +497,39 @@ class AnnotationDetector:
 
             fill_ratio = ink_pixels / float(bbox_area)
 
-            print(
-                f"\nCandidate:"
-                f" bbox={w}x{h}"
-                f" | bbox_area={bbox_area}"
-                f" | ink_pixels={ink_pixels}"
-                f" | fill_ratio={fill_ratio:.3f}"
-            )
+            if self.verbose:
+                print(
+                    f"\nCandidate:"
+                    f" bbox={w}x{h}"
+                    f" | bbox_area={bbox_area}"
+                    f" | ink_pixels={ink_pixels}"
+                    f" | fill_ratio={fill_ratio:.3f}"
+                )
+
+            reject = None
 
             if bbox_area < self.min_confident_area:
-                print(
-                    f"  REJECT -> bbox_area "
-                    f"{bbox_area} < {self.min_confident_area}"
-                )
+                reject = f"bbox_area {bbox_area} < {self.min_confident_area}"
+
+            elif w < self.min_confident_dim:
+                reject = f"width {w} < {self.min_confident_dim}"
+
+            elif h < self.min_confident_dim:
+                reject = f"height {h} < {self.min_confident_dim}"
+
+            elif ink_pixels < self.min_ink_pixels:
+                reject = f"ink_pixels {ink_pixels} < {self.min_ink_pixels}"
+
+            elif fill_ratio < self.min_fill_ratio:
+                reject = f"fill_ratio {fill_ratio:.3f} < {self.min_fill_ratio}"
+
+            if reject is not None:
+                if self.verbose:
+                    print(f"  REJECT -> {reject}")
                 continue
 
-            if w < self.min_confident_dim:
-                print(
-                    f"  REJECT -> width "
-                    f"{w} < {self.min_confident_dim}"
-                )
-                continue
-
-            if h < self.min_confident_dim:
-                print(
-                    f"  REJECT -> height "
-                    f"{h} < {self.min_confident_dim}"
-                )
-                continue
-
-            if ink_pixels < self.min_ink_pixels:
-                print(
-                    f"  REJECT -> ink_pixels "
-                    f"{ink_pixels} < {self.min_ink_pixels}"
-                )
-                continue
-
-            if fill_ratio < self.min_fill_ratio:
-                print(
-                    f"  REJECT -> fill_ratio "
-                    f"{fill_ratio:.3f} < {self.min_fill_ratio}"
-                )
-                continue
-
-            print("  ACCEPT")
-
-            confident.append(
-                (
-                    x1,
-                    y1,
-                    x2,
-                    y2
-                )
-            )
+            if self.verbose:
+                print("  ACCEPT")
 
             confident.append(
                 (
@@ -709,8 +585,8 @@ class AnnotationDetector:
                 detected,
                 (x1, y1),
                 (x2, y2),
-                (0, 0, 255),
-                2
+                self.roi_color,
+                self.roi_thickness
             )
 
         return rois, {
