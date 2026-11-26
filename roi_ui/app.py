@@ -32,12 +32,16 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import cv2
+import numpy as np
 import pandas as pd
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from PIL import Image, ImageDraw, ImageFont
 
 from src.config import load_config
 from src.ocr.factory import create_backend
+from src.preprocessor import Preprocessor
+from src.roi_enhancer import RoiEnhancer
 
 # Loaded once at import; every tunable below comes from config.yaml.
 # (--config FILE re-points these in main() before anything is used.)
@@ -102,10 +106,68 @@ def _apply_config(new_cfg):
 _apply_config(cfg)
 
 
-def annotate_image(image_path, text, confidence, error=None):
-    """Return a copy of the image with the OCR result printed below it."""
+def load_bgr(path: Path):
+    """
+    Read an image as 3-channel BGR. Transparent pixels (screenshots are
+    RGBA) are flattened onto ui.alpha_background instead of being dropped
+    to whatever colour is stored under zero alpha.
+    """
 
-    img = Image.open(image_path).convert("RGB")
+    data = np.fromfile(str(path), dtype=np.uint8)
+    img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+
+    if img is None:
+        raise ValueError(f"Could not decode image: {path.name}")
+
+    if img.ndim == 2:
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+    if img.shape[2] == 4:
+        alpha = img[:, :, 3:4].astype(np.float32) / 255.0
+        background = np.array(ui.alpha_background, dtype=np.float32)
+        flat = img[:, :, :3].astype(np.float32) * alpha + background * (1.0 - alpha)
+        return flat.round().astype(np.uint8)
+
+    return img
+
+
+def run_ocr(backend, path: Path, preprocessor, enhancer):
+    """
+    OCR one dropped file.
+
+    With preprocess_enabled the image goes through the same Preprocessor
+    main.py uses (gray conversion), then the same RoiEnhancer (Otsu, per the
+    shared `roi_enhance` section), before the backend reads it. Annotation
+    removal and ROI detection are intentionally not run: the dropped
+    images are already single ROIs.
+
+    Returns (shown, text, confidence): `shown` is the image the model
+    actually saw, as a PIL image, for the annotated output.
+    """
+
+    if not ui.preprocess_enabled:
+        result = backend.read(path)
+        return (
+            Image.open(path).convert("RGB"),
+            result.get("text", ""),
+            float(result.get("confidence", 0.0)),
+        )
+
+    gray, _ = preprocessor.process(load_bgr(path))
+    gray = enhancer.enhance(gray)
+
+    result = backend.read(gray)
+
+    return (
+        Image.fromarray(gray).convert("RGB"),
+        result.get("text", ""),
+        float(result.get("confidence", 0.0)),
+    )
+
+
+def annotate_image(img, text, confidence, error=None):
+    """Return a copy of the PIL image with the OCR result printed below it."""
+
     w, h = img.size
 
     canvas_w = max(w, ui.min_canvas_width)
@@ -189,6 +251,9 @@ def watch_loop(input_dir: Path, output_dir: Path):
         print(f"[roi-ui] Failed to load OCR backend: {exc}")
         return
 
+    preprocessor = Preprocessor(cfg.preprocess)
+    enhancer = RoiEnhancer(cfg.roi_enhance)
+
     with state_lock:
         status["backend_ready"] = True
 
@@ -235,7 +300,7 @@ def watch_loop(input_dir: Path, output_dir: Path):
             pending[name] = (signature, streak)
 
             if streak >= ui.stable_polls:
-                process_file(backend, path, output_dir)
+                process_file(backend, preprocessor, enhancer, path, output_dir)
                 seen[name] = signature
                 pending.pop(name, None)
 
@@ -251,21 +316,23 @@ def watch_loop(input_dir: Path, output_dir: Path):
         time.sleep(ui.poll_seconds)
 
 
-def process_file(backend, path: Path, output_dir: Path):
+def process_file(backend, preprocessor, enhancer, path: Path, output_dir: Path):
     print(f"[roi-ui] New ROI: {path.name}")
 
     text, confidence, error = "", 0.0, None
+    shown = None
 
     try:
-        result = backend.read(path)
-        text = result.get("text", "")
-        confidence = float(result.get("confidence", 0.0))
+        shown, text, confidence = run_ocr(backend, path, preprocessor, enhancer)
     except Exception as exc:
         error = str(exc)
         print(f"[roi-ui] OCR failed on {path.name}: {exc}")
 
     try:
-        annotated = annotate_image(path, text, confidence, error=error)
+        if shown is None:
+            shown = Image.open(path).convert("RGB")
+
+        annotated = annotate_image(shown, text, confidence, error=error)
         out_name = path.stem + ".png"
         annotated.save(output_dir / out_name)
     except Exception as exc:

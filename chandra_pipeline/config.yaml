@@ -1,0 +1,51 @@
+# Chandra experiment -- everything specific to this folder.
+# Shared pipeline settings (deskew, separator, crop, pdf, input folder) are read from the
+# repo's config.yaml. Delete this whole folder to remove the experiment.
+
+run:
+  skip_existing_outputs: false
+  verbose: true
+
+paths:
+  output_dir: outputs               # relative to this folder
+
+layout:
+  chandra_dir: chandra
+  margin_image: "page_{page:03d}_margin_boxes.png"
+  margin_raw: "page_{page:03d}_margin_raw.txt"
+  answers_raw: "page_{page:03d}_answers_raw.txt"
+  qa_csv: "page_{page:03d}_qa.csv"
+  summary_csv: questions.csv
+
+chandra:
+  # Chandra loaded in LM Studio with its local server running; id as listed by GET <host>/models.
+  model: chandra-ocr-2
+  host: http://127.0.0.1:1234/v1
+  api_key: lm-studio
+  temperature: 0
+  max_tokens: 12000
+  timeout: 600
+  # LM Studio/Chandra intermittently returns an EMPTY reply for a valid image, and which image
+  # sizes work depends on the page (a full page worked at 1280 but not 1024/1536/1792; a
+  # margin-only page worked at 1152 only). Each size is tried in turn until blocks come back.
+  max_side_attempts: [1280, 1152, 1344, 1216, 1024, 1408]
+  bbox_scale: 1024                  # Chandra's data-bbox grid (1024 default; try 1000 if boxes drift)
+  prompt: |
+    OCR this image to HTML, keeping the layout.
+
+    Wrap every block of text (including handwriting and margin notes) in its own
+    <div data-bbox="x0 y0 x1 y1" data-label="LABEL"> element, where the bbox is the
+    block's position on the image (left top right bottom).
+
+margin_qa:
+  # Regex a margin block's text must match to count as a question number
+  # (e.g. '^\s*\(?\d+[a-z]?\)?\.?\s*$'); null keeps every margin block.
+  question_pattern: null
+  answer_y_tolerance: 20
+  answer_separator: "\n"
+  save_raw_response: true
+  box_color: [0, 0, 255]            # BGR
+  box_thickness: 3
+  label_font_scale: 1.0
+  label_thickness: 2
+  label_offset: 8

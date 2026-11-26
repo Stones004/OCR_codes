@@ -43,6 +43,7 @@ class ROITextExtractor:
     def extract(self, image, rois=None):
 
         predictions = []
+        roi_of_prediction = []
 
         # --------------------------------------------------
         # Whole-image OCR
@@ -66,14 +67,17 @@ class ROITextExtractor:
 
         else:
 
-            for roi in rois:
+            for roi_idx, roi in enumerate(rois):
 
                 result = self.ocr.read(roi["roi"])
 
-                if isinstance(result, list):
-                    predictions.extend(result)
-                else:
-                    predictions.append(result)
+                if not isinstance(result, list):
+                    result = [result]
+
+                for item in result:
+                    roi_of_prediction.append(roi_idx + 1)
+
+                predictions.extend(result)
 
         # --------------------------------------------------
         # Normalize Output
@@ -86,6 +90,8 @@ class ROITextExtractor:
             results.append({
 
                 "block_id": idx + 1,
+                # 1-based ROI the prediction came from; None for whole-image OCR
+                "roi": roi_of_prediction[idx] if roi_of_prediction else None,
                 "text": item.get("text", "")
 
             })

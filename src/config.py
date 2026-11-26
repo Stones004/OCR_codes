@@ -43,6 +43,7 @@ class ConfigError(ValueError):
 class PipelineConfig:
     use_annotation_detection: bool
     use_annotation_removal: bool
+    use_noise_classifier: bool
     save_rois: bool
     save_debug_images: bool
     skip_existing_outputs: bool
@@ -77,6 +78,7 @@ class LayoutConfig:
     recognizer_dir: str
     roi_dir: str
     ocr_dir: str
+    noise_dir: str                          # <pdf>/noise/{clean,noise}/ review crops + per-page CSVs
 
     # str.format patterns; {page} is the 1-based page number, {roi} the ROI number
     page_image: str
@@ -85,7 +87,9 @@ class LayoutConfig:
     page_binary: str
     page_vertical: str
     roi_image: str
-    ocr_csv: str
+    ocr_image: str                          # one image per ROI (crop + predicted text)
+    ocr_page_image: str                     # whole-margin mode: one image per page
+    noise_csv: str
     report_csv: str
     summary_csv: str
 
@@ -211,6 +215,68 @@ class VisualizationConfig:
 
 
 # ======================================================================
+# Noise classifier (pre-OCR triage)
+# ======================================================================
+
+@dataclass(frozen=True)
+class NoiseClassifierConfig:
+    # Trained in the trocr-handwriting-v2 project (src/noise_classifier/train.py) on
+    # annotated ROI crops; a crop is "noise" if it was never given a usable
+    # transcription (blank/NaN Normalize, or never annotated at all). Tags
+    # every ROI for review -- does not itself change what gets OCR'd.
+    checkpoint: Path
+    device: str                              # "auto" | "cpu" | "cuda"
+    # The model outputs a single noise_score in [0, 1] = P(noise) (see
+    # NoiseClassifier.classify). A ROI is "noise" if noise_score >= this, "clean" if
+    # noise_score <= 1 - this, else "uncertain" (the symmetric band around 0.5 in
+    # between). On the held-out test split, 0.7 keeps 88.6% of ROIs out of that band
+    # at 96.2% accuracy on those kept (vs 92.9% accuracy with the band empty at 0.5).
+    confidence_threshold: float
+    # Copy every classified ROI into <pdf>/noise/{clean,noise,uncertain}/
+    # (named like the roi/ crop) so predictions can be reviewed by eye, captioned
+    # with the noise_score the same way roi_ui/app.py captions OCR results.
+    save_review_crops: bool
+    caption_height: int                      # px reserved below the crop for the caption
+    caption_font_size: int
+    caption_bg: tuple[int, ...]              # RGB
+    color_clean: tuple[int, ...]             # RGB caption text when bucket == clean
+    color_noise: tuple[int, ...]             # RGB caption text when bucket == noise
+    color_uncertain: tuple[int, ...]         # RGB caption text when bucket == uncertain
+    font_candidates: tuple[str, ...]
+
+
+# ======================================================================
+# ROI enhancement (applied to each ROI crop before it is saved / OCR'd)
+# ======================================================================
+
+@dataclass(frozen=True)
+class RoiEnhanceConfig:
+    enabled: bool                            # false: ROIs stay plain grayscale crops
+    blur_ksize: int                          # odd Gaussian kernel before Otsu; 0 = no blur
+    # Per-ROI Otsu can split a near-uniform crop (blank paper) at a meaningless level and turn
+    # paper noise into ink. If the threshold is not at least this far below the crop's mean
+    # gray level, the crop is left as it was.
+    min_contrast_gap: float
+
+
+# ======================================================================
+# OCR output images (crop with the predicted text printed below it)
+# ======================================================================
+
+@dataclass(frozen=True)
+class OcrOutputConfig:
+    caption_height: int                      # px reserved below the crop for the text
+    min_canvas_width: int
+    text_x: int
+    text_y: int                              # offset of the text below the crop
+    font_size: int
+    bg: tuple[int, ...]                      # RGB
+    text_color: tuple[int, ...]              # RGB
+    empty_label: str                         # shown when the model returns nothing
+    font_candidates: tuple[str, ...]
+
+
+# ======================================================================
 # OCR backends
 # ======================================================================
 
@@ -265,6 +331,11 @@ class RoiUiConfig:
     poll_seconds: float
     stable_polls: int
     max_results: int
+
+    # Pre-processing applied to every dropped image before OCR: the same
+    # Preprocessor main.py uses (no annotation removal, no ROI detection).
+    preprocess_enabled: bool
+    alpha_background: tuple[int, ...]        # BGR fill for transparent pixels
 
     caption_height: int
     min_canvas_width: int
@@ -414,6 +485,9 @@ class Config:
     preprocess: PreprocessConfig
     annotation_detector: AnnotationDetectorConfig
     visualization: VisualizationConfig
+    noise_classifier: NoiseClassifierConfig
+    roi_enhance: RoiEnhanceConfig
+    ocr_output: OcrOutputConfig
     ocr: OcrConfig
     roi_ui: RoiUiConfig
     dataset_builder: DatasetBuilderConfig

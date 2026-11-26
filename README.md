@@ -415,3 +415,12 @@ Sections: `pipeline` (feature flags), `paths`/`layout` (folders and file names),
 
 See [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md) for the data flow and a "what to change
 where" table. The schema is in `src/config.py`.
+
+## Project status (as of 2026-11-26)
+
+- Last built: `chandra_pipeline/` (Chandra OCR backend plus margin Q&A extractor),
+  `src/noise_classifier.py`, `src/ocr_annotator.py`, `src/roi_enhancer.py`.
+- Recent dev changes pushed here: expanded `config.yaml` / `src/config.py`,
+  `main.py` and `roi_ui/app.py` updates, ROI text extractor fixes, updated
+  `requirements.txt`.
+- Not in the repo (restore locally): `.env`, `data/`, `models/`, `outputs/`, `venv/`.

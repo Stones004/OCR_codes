@@ -32,8 +32,9 @@ review:
 # ----------------------------------------------------------------------
 
 pipeline:
-  use_annotation_detection: true    # true: OCR each detected ROI; false: OCR the whole margin
+  use_annotation_detection: true   # true: OCR each detected ROI; false: OCR the whole margin
   use_annotation_removal: true      # erase red/green reviewer ink before detection
+  use_noise_classifier: true        # tag each ROI noise/clean before OCR (see noise_classifier section)
   save_rois: true                   # write each ROI crop to <pdf>/roi/
   save_debug_images: true           # write the annotated detection image to <pdf>/recognizer/
   skip_existing_outputs: true       # skip a PDF whose output folder already exists
@@ -55,6 +56,7 @@ layout:
   recognizer_dir: recognizer
   roi_dir: roi
   ocr_dir: ocr
+  noise_dir: noise
 
   page_image: "page_{page:03d}.png"
   page_mask: "page_{page:03d}_mask.png"
@@ -62,7 +64,9 @@ layout:
   page_binary: "page_{page:03d}_binary.png"
   page_vertical: "page_{page:03d}_vertical.png"
   roi_image: "page_{page:03d}_roi_{roi}.png"
-  ocr_csv: "page_{page:03d}.csv"
+  ocr_image: "page_{page:03d}_roi_{roi}.png"
+  ocr_page_image: "page_{page:03d}.png"
+  noise_csv: "page_{page:03d}_noise.csv"
   report_csv: report.csv
   summary_csv: summary.csv
 
@@ -191,6 +195,67 @@ visualization:                      # debug overlays (BGR)
 
 
 # ----------------------------------------------------------------------
+# Noise classifier (pre-OCR triage)
+# ----------------------------------------------------------------------
+
+noise_classifier:
+  # ResNet-18 trained in the trocr-handwriting-v2 project on this same
+  # annotation workbook (src/noise_classifier/train.py there); ~93% test
+  # accuracy on held-out documents. Runs in-process (torch/torchvision are
+  # already in this project's root venv), no second venv needed. Tags every
+  # ROI for review; does not skip OCR on ROIs it calls noise.
+  checkpoint: models/noise_classifier/best.pt
+  device: auto                      # auto | cpu | cuda
+  # The model outputs a single noise_score in [0, 1] = P(noise): near 0 is confidently
+  # clean, near 1 is confidently noise, near 0.5 is a toss-up either way. A ROI is
+  # "noise" if noise_score >= this, "clean" if noise_score <= 1 - this, else "uncertain"
+  # (the symmetric band around 0.5 in between -- at 0.50 that band is empty, so every ROI
+  # is forced to clean/noise with no uncertain bucket). On the held-out test split, 0.7
+  # keeps 88.6% of ROIs out of that band at 96.2% accuracy on those kept (vs 92.9%
+  # accuracy with the band empty).
+  confidence_threshold: 0.50
+  save_review_crops: true           # <pdf>/noise/{clean,noise,uncertain}/page_{page}_roi_{roi}.png
+
+  # Caption burned onto each saved review crop: the noise_score itself (same idea as
+  # roi_ui/app.py's annotate_image, colours RGB/Pillow).
+  caption_height: 22
+  caption_font_size: 14
+  caption_bg: [24, 24, 24]
+  color_clean: [70, 200, 100]
+  color_noise: [220, 80, 80]
+  color_uncertain: [230, 170, 40]
+  font_candidates: ["arial.ttf", "DejaVuSans.ttf"]
+
+
+# ----------------------------------------------------------------------
+# ROI enhancement (after noise classification, before ROIs are saved and OCR'd)
+# ----------------------------------------------------------------------
+
+roi_enhance:
+  enabled: true                     # Otsu-binarize every ROI (black ink on white); false = plain gray crops
+  blur_ksize: 3                     # odd Gaussian kernel applied before Otsu to smooth jagged edges; 0 = off
+  # Per-ROI Otsu on a near-blank crop picks a meaningless level and turns paper noise into ink.
+  # The crop is kept as gray unless the threshold sits at least this far below its mean.
+  min_contrast_gap: 30
+
+
+# ----------------------------------------------------------------------
+# OCR output images (<pdf>/ocr/): the crop the model read, predicted text below it
+# ----------------------------------------------------------------------
+
+ocr_output:
+  caption_height: 32                # px reserved below the crop for the text
+  min_canvas_width: 120             # narrow crops are padded out to at least this
+  text_x: 4
+  text_y: 4                         # text offset below the crop
+  font_size: 18
+  bg: [24, 24, 24]                  # RGB
+  text_color: [235, 235, 235]       # RGB
+  empty_label: "(no text detected)"
+  font_candidates: ["arial.ttf", "DejaVuSans.ttf"]
+
+
+# ----------------------------------------------------------------------
 # OCR backends
 # ----------------------------------------------------------------------
 
@@ -202,7 +267,8 @@ ocr:
     # PARSeq runs in a separate venv (strhub lives there), as a subprocess.
     # Path layout below is the Windows one; change for Linux/macOS (venv/bin/python).
     venv_python: ocr_dataset_builder/venv/Scripts/python.exe
-    checkpoint: ocr_dataset_builder/models/parseq_base_mix_v2.ckpt
+    #checkpoint: D:\OCR_codes\ocr_dataset_builder\models\parseq_replay30_s44.ckpt
+    checkpoint: D:\OCR_codes\ocr_dataset_builder\models\parseq_iv_best.ckpt
     device: auto                    # auto | cpu | cuda
     norm_mean: 0.5
     norm_std: 0.5
@@ -264,6 +330,12 @@ roi_ui:
   poll_seconds: 1.0
   stable_polls: 2                   # file must be unchanged this many polls before it is read
   max_results: 300
+
+  # Every dropped image goes through the same Preprocessor stage main.py uses
+  # (gray conversion; settings in the shared `preprocess` section) before OCR.
+  # Annotation (ink) removal and ROI detection are deliberately NOT run here.
+  preprocess_enabled: true          # false: OCR the file exactly as dropped
+  alpha_background: [255, 255, 255] # BGR colour transparent pixels (screenshots) are flattened onto
 
   # annotated-image rendering (colours are RGB here: Pillow)
   caption_height: 64

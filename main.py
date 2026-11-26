@@ -14,6 +14,9 @@ from src.preprocessor import Preprocessor
 from src.roi_text_extractor import ROITextExtractor
 from src.config import load_config
 from src.annotation_remover import AnnotationRemover
+from src.noise_classifier import NoiseClassifier
+from src.roi_enhancer import RoiEnhancer
+from src.ocr_annotator import OcrAnnotator
 import numpy as np
 
 
@@ -79,6 +82,12 @@ annotation_detector = AnnotationDetector(
 
 annotation_remover = AnnotationRemover(cfg.ink_removal)
 
+noise_classifier = NoiseClassifier(cfg.noise_classifier)
+
+roi_enhancer = RoiEnhancer(cfg.roi_enhance)
+
+ocr_annotator = OcrAnnotator(cfg.ocr_output)
+
 text_extractor = ROITextExtractor(cfg.ocr)
 
 summary = []
@@ -116,6 +125,7 @@ for pdf_path in pdf_files:
     recognizer_dir = pdf_output / layout.recognizer_dir
     roi_dir = pdf_output / layout.roi_dir
     ocr_dir = pdf_output / layout.ocr_dir
+    noise_dir = pdf_output / layout.noise_dir
     annotation_removed_dir = pdf_output / layout.annotation_removed_dir
 
     for folder in [
@@ -127,6 +137,7 @@ for pdf_path in pdf_files:
         recognizer_dir,
         roi_dir,
         ocr_dir,
+        noise_dir,
         failed_dir,
         annotation_removed_dir
     ]:
@@ -285,6 +296,43 @@ for pdf_path in pdf_files:
 
             rois, debug = annotation_detector.detect(gray, binary)
 
+            if pipeline_cfg.use_noise_classifier:
+
+                noise_classifier.classify_rois(rois)
+
+                noise_rows = []
+
+                for i, roi in enumerate(rois):
+
+                    noise_rows.append({
+                        "roi": i + 1,
+                        "bbox": roi["bbox"],
+                        "noise_score": roi["noise_score"],
+                        "bucket": roi["noise_bucket"],
+                    })
+
+                    if noise_classifier.save_review_crops:
+
+                        review_dir = noise_dir / roi["noise_bucket"]
+                        review_dir.mkdir(parents=True, exist_ok=True)
+
+                        annotated = noise_classifier.annotate_review_crop(
+                            roi["roi"], roi["noise_bucket"], roi["noise_score"]
+                        )
+                        annotated.save(review_dir / layout.roi_image.format(page=page_idx + 1, roi=i + 1))
+
+                pd.DataFrame(noise_rows).to_csv(
+                    noise_dir / layout.noise_csv.format(page=page_idx + 1),
+                    index=False
+                )
+
+                counts = pd.Series([r["bucket"] for r in noise_rows]).value_counts()
+                summary_str = ", ".join(f"{counts.get(b, 0)} {b}" for b in ("clean", "noise", "uncertain"))
+                print(f"Noise classifier : {len(noise_rows)} ROIs -- {summary_str}")
+
+            # After noise classification on purpose: that model was trained on gray crops.
+            roi_enhancer.enhance_rois(rois)
+
             if pipeline_cfg.save_rois:
 
                 for i, roi in enumerate(rois):
@@ -333,10 +381,16 @@ for pdf_path in pdf_files:
         # Save OCR Results
         # ------------------------------------------
 
-        pd.DataFrame(extracted_text).to_csv(
-            ocr_dir / layout.ocr_csv.format(page=page_idx + 1),
-            index=False
-        )
+        for item in extracted_text:
+
+            if item["roi"] is None:
+                shown = gray
+                out_name = layout.ocr_page_image.format(page=page_idx + 1)
+            else:
+                shown = rois[item["roi"] - 1]["roi"]
+                out_name = layout.ocr_image.format(page=page_idx + 1, roi=item["roi"])
+
+            ocr_annotator.annotate(shown, item["text"]).save(ocr_dir / out_name)
 
         print(f"Separator : {separator['x']}")
         results.append({
